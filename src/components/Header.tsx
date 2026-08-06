@@ -22,28 +22,29 @@ export const Header: React.FC<HeaderProps> = ({
   alertLevel,
 }) => {
   return (
-    <header className="bg-slate-900 border-b border-slate-800 sticky top-0 z-40 px-4 py-3 shadow-lg">
+    <header className="backdrop-blur-xl bg-[#020617]/70 border-b border-white/10 sticky top-0 z-40 px-4 py-3 shadow-2xl">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
         {/* Logo & Title */}
         <div className="flex items-center gap-3">
-          <div className={`p-2 rounded-xl transition-colors ${
-            alertLevel === 'RED' ? 'bg-red-500/20 text-red-400 animate-pulse' :
-            alertLevel === 'YELLOW' ? 'bg-amber-500/20 text-amber-400' : 'bg-emerald-500/20 text-emerald-400'
+          <div className={`p-2.5 rounded-2xl backdrop-blur-md border transition-all ${
+            alertLevel === 'RED' ? 'bg-red-500/20 text-red-400 border-red-500/40 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]' :
+            alertLevel === 'YELLOW' ? 'bg-amber-500/20 text-amber-400 border-amber-500/40 shadow-[0_0_15px_rgba(245,158,11,0.3)]' :
+            'bg-blue-500/20 text-blue-400 border-blue-400/30 shadow-[0_0_15px_rgba(59,130,246,0.3)]'
           }`}>
             <Shield className="w-6 h-6" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="font-bold text-white text-lg tracking-tight">DriveSafe AI</h1>
-              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide ${
-                alertLevel === 'RED' ? 'bg-red-500 text-white animate-bounce' :
-                alertLevel === 'YELLOW' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' :
-                'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+              <h1 className="font-bold text-white text-xl tracking-tight">DriveSafe AI</h1>
+              <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider backdrop-blur-md ${
+                alertLevel === 'RED' ? 'bg-red-500 text-white animate-bounce shadow-lg shadow-red-500/50' :
+                alertLevel === 'YELLOW' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' :
+                'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
               }`}>
-                {alertLevel === 'RED' ? 'CRITICAL ALERT' : alertLevel === 'YELLOW' ? 'WARNING' : 'ACTIVE'}
+                {alertLevel === 'RED' ? 'CRITICAL ALERT' : alertLevel === 'YELLOW' ? 'WARNING' : 'SYSTEM ONLINE'}
               </span>
             </div>
-            <p className="text-xs text-slate-400 hidden sm:block">AI Driver Safety & Drowsiness Alert System</p>
+            <p className="text-xs text-slate-400 hidden sm:block">Frosted Glass AI Driver Safety & Drowsiness HUD</p>
           </div>
         </div>
 
@@ -53,10 +54,10 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onToggleMonitoring}
             id="btn-toggle-monitoring"
-            className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all shadow-md ${
+            className={`flex items-center gap-1.5 px-3 py-1.5 sm:px-4 sm:py-2 rounded-xl text-xs sm:text-sm font-semibold transition-all backdrop-blur-md border shadow-lg ${
               isMonitoring
-                ? 'bg-rose-600 hover:bg-rose-500 text-white shadow-rose-900/30'
-                : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-900/30'
+                ? 'bg-rose-600/90 hover:bg-rose-500 text-white border-rose-400/30 shadow-rose-900/40'
+                : 'bg-emerald-600/90 hover:bg-emerald-500 text-white border-emerald-400/30 shadow-emerald-900/40'
             }`}
           >
             {isMonitoring ? (
@@ -77,7 +78,7 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={onToggleMute}
             id="btn-toggle-mute"
             title={isMuted ? "Unmute Alarm Sounds" : "Mute Alarm Sounds"}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors border border-slate-700"
+            className="p-2 rounded-xl backdrop-blur-md bg-white/5 hover:bg-white/10 text-slate-300 transition-all border border-white/10"
           >
             {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
           </button>
@@ -86,7 +87,7 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onOpenAICoach}
             id="btn-ai-coach"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600/20 border border-indigo-500/30 text-indigo-300 hover:bg-indigo-600/30 text-xs sm:text-sm font-medium transition-all"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl backdrop-blur-md bg-indigo-500/20 border border-indigo-400/30 text-indigo-200 hover:bg-indigo-500/30 text-xs sm:text-sm font-medium transition-all shadow-lg shadow-indigo-950/40"
           >
             <Bot className="w-4 h-4 text-indigo-400" />
             <span className="hidden md:inline">AI Safety Coach</span>
@@ -96,9 +97,9 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             onClick={onOpenAndroidExport}
             id="btn-android-apk-export"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs sm:text-sm font-semibold shadow-md shadow-teal-900/30 transition-all border border-emerald-400/30"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl backdrop-blur-md bg-white text-slate-950 hover:bg-slate-100 text-xs sm:text-sm font-semibold shadow-xl shadow-white/10 transition-all border border-white/40"
           >
-            <Smartphone className="w-4 h-4" />
+            <Smartphone className="w-4 h-4 text-blue-600" />
             <span className="hidden sm:inline">Export Android APK</span>
             <span className="sm:hidden">APK</span>
           </button>

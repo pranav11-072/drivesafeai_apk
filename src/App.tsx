@@ -66,20 +66,29 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-emerald-500 selection:text-white">
+    <div className="min-h-screen bg-[#020617] text-slate-100 flex flex-col font-sans selection:bg-blue-500 selection:text-white relative overflow-x-hidden">
+      {/* Frosted Glass Background Ambient Lighting */}
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-blue-600/20 blur-[130px] rounded-full"></div>
+        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-indigo-600/20 blur-[130px] rounded-full"></div>
+        <div className="absolute top-[40%] left-[30%] w-[35%] h-[35%] bg-sky-500/10 blur-[110px] rounded-full"></div>
+      </div>
+
       {/* Top Bar Header */}
-      <Header
-        isMonitoring={driverState.isMonitoring}
-        onToggleMonitoring={handleToggleMonitoring}
-        onOpenAndroidExport={() => setIsAndroidExportOpen(true)}
-        onOpenAICoach={() => setIsAICoachOpen(true)}
-        isMuted={isMuted}
-        onToggleMute={handleToggleMute}
-        alertLevel={driverState.alertLevel}
-      />
+      <div className="relative z-10">
+        <Header
+          isMonitoring={driverState.isMonitoring}
+          onToggleMonitoring={handleToggleMonitoring}
+          onOpenAndroidExport={() => setIsAndroidExportOpen(true)}
+          onOpenAICoach={() => setIsAICoachOpen(true)}
+          isMuted={isMuted}
+          onToggleMute={handleToggleMute}
+          alertLevel={driverState.alertLevel}
+        />
+      </div>
 
       {/* Main Responsive Dashboard Content */}
-      <main className="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-5 space-y-4">
+      <main className="relative z-10 flex-1 max-w-7xl w-full mx-auto p-3 sm:p-5 space-y-4">
         {/* Top Section: Camera Vision & Speedometer HUD */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {/* Driver Camera AI Monitor (Takes 2 columns on lg) */}
@@ -96,6 +105,7 @@ export default function App() {
             <Speedometer
               speedData={speedData}
               setSpeedData={setSpeedData}
+              isMonitoring={driverState.isMonitoring}
             />
           </div>
         </div>

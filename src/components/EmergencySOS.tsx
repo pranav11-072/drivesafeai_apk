@@ -60,10 +60,12 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData }) => {
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl">
-      <div className="flex items-center justify-between border-b border-slate-800 pb-2 mb-3">
+    <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-4 shadow-2xl shadow-black/50 flex flex-col justify-between h-full">
+      <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-3">
         <div className="flex items-center gap-2 text-rose-400 font-semibold text-sm">
-          <ShieldAlert className="w-5 h-5" />
+          <div className="p-1.5 bg-rose-500/20 rounded-lg border border-rose-400/30 text-rose-400">
+            <ShieldAlert className="w-4 h-4" />
+          </div>
           <span>Emergency SOS & Contacts</span>
         </div>
       </div>
@@ -74,18 +76,18 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData }) => {
           onClick={handleTriggerSOS}
           disabled={isSosActive}
           id="btn-trigger-sos"
-          className={`w-full py-4 px-4 rounded-xl font-black text-white text-base tracking-wider uppercase flex items-center justify-center gap-2 shadow-lg transition-all ${
+          className={`w-full py-3.5 px-4 rounded-xl font-black text-white text-base tracking-wider uppercase flex items-center justify-center gap-2 shadow-xl transition-all backdrop-blur-md ${
             isSosActive
               ? 'bg-rose-700 animate-ping'
-              : 'bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 hover:from-rose-500 hover:to-red-500 shadow-rose-950/60 border border-rose-400/40 active:scale-[0.98]'
+              : 'bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 hover:from-rose-500 hover:to-red-500 shadow-rose-950/60 border border-rose-400/50 active:scale-[0.98]'
           }`}
         >
-          <PhoneCall className="w-5 h-5 animate-bounce" />
+          <PhoneCall className="w-5 h-5 animate-bounce text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]" />
           <span>{isSosActive ? "DISPATCHING SOS SIGNAL..." : "TRIGGER EMERGENCY SOS"}</span>
         </button>
 
         {sosSentMessage && (
-          <div className="mt-2.5 bg-emerald-950/80 border border-emerald-500/40 p-2.5 rounded-xl text-xs text-emerald-300 flex items-start gap-2">
+          <div className="mt-2.5 backdrop-blur-md bg-emerald-500/10 border border-emerald-500/40 p-2.5 rounded-xl text-xs text-emerald-300 flex items-start gap-2 shadow-lg">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
             <span>{sosSentMessage}</span>
           </div>
@@ -99,7 +101,7 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData }) => {
           <button
             onClick={() => setIsAdding(!isAdding)}
             id="btn-toggle-add-contact"
-            className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 font-medium"
+            className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 font-medium"
           >
             <Plus className="w-3.5 h-3.5" /> Add Contact
           </button>
@@ -107,13 +109,13 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData }) => {
 
         {/* Add Contact Form */}
         {isAdding && (
-          <form onSubmit={handleAddContact} className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 mb-3">
+          <form onSubmit={handleAddContact} className="backdrop-blur-md bg-white/5 p-3 rounded-2xl border border-white/10 space-y-2 mb-3">
             <input
               type="text"
               placeholder="Contact Name"
               value={newContactName}
               onChange={(e) => setNewContactName(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              className="w-full bg-slate-900/80 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
               required
             />
             <input
@@ -121,7 +123,7 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData }) => {
               placeholder="Phone Number"
               value={newContactPhone}
               onChange={(e) => setNewContactPhone(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              className="w-full bg-slate-900/80 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
               required
             />
             <input
@@ -129,7 +131,7 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData }) => {
               placeholder="Relationship (e.g., Parent, Friend)"
               value={newContactRelation}
               onChange={(e) => setNewContactRelation(e.target.value)}
-              className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              className="w-full bg-slate-900/80 border border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-blue-500"
             />
             <div className="flex justify-end gap-2 pt-1">
               <button
@@ -141,7 +143,7 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData }) => {
               </button>
               <button
                 type="submit"
-                className="px-3 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold"
+                className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-semibold shadow-md"
               >
                 Save
               </button>
@@ -153,12 +155,12 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData }) => {
           {contacts.map((contact) => (
             <div
               key={contact.id}
-              className="bg-slate-950/80 p-2.5 rounded-xl border border-slate-800/80 flex items-center justify-between text-xs"
+              className="backdrop-blur-md bg-white/5 p-2.5 rounded-xl border border-white/10 flex items-center justify-between text-xs"
             >
               <div>
                 <div className="flex items-center gap-1.5 font-semibold text-slate-200">
                   <span>{contact.name}</span>
-                  <span className="text-[10px] text-slate-500 font-normal">({contact.relationship})</span>
+                  <span className="text-[10px] text-slate-400 font-normal">({contact.relationship})</span>
                 </div>
                 <div className="text-slate-400 font-mono text-[11px]">{contact.phone}</div>
               </div>

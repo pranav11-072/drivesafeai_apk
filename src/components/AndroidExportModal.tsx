@@ -114,22 +114,22 @@ class MainActivity : BridgeActivity() {
 }`;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden">
+    <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xl flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div className="backdrop-blur-2xl bg-white/10 border border-white/20 rounded-3xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl shadow-black/80 overflow-hidden">
         {/* Modal Header */}
-        <div className="p-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
+        <div className="p-4 backdrop-blur-md bg-white/5 border-b border-white/10 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-xl border border-emerald-500/30">
+            <div className="p-2.5 bg-emerald-500/20 text-emerald-400 rounded-2xl border border-emerald-400/30">
               <Smartphone className="w-6 h-6" />
             </div>
             <div>
               <h2 className="text-lg font-bold text-white">Convert & Build Mobile APK in Android Studio</h2>
-              <p className="text-xs text-slate-400">Step-by-step export setup for Android Studio & Capacitor</p>
+              <p className="text-xs text-slate-300">Step-by-step export setup for Android Studio & Capacitor</p>
             </div>
           </div>
           <button
             onClick={onClose}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition-colors"
+            className="p-2 rounded-xl bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white border border-white/10 transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -138,54 +138,54 @@ class MainActivity : BridgeActivity() {
         {/* Modal Body */}
         <div className="p-4 sm:p-6 overflow-y-auto space-y-4 text-xs sm:text-sm">
           {/* Quick Intro Banner */}
-          <div className="bg-gradient-to-r from-emerald-950/60 to-slate-950 p-3.5 rounded-xl border border-emerald-500/30 text-emerald-200 flex items-start gap-3">
+          <div className="backdrop-blur-md bg-emerald-500/10 p-3.5 rounded-2xl border border-emerald-500/30 text-emerald-200 flex items-start gap-3 shadow-lg">
             <PlayCircle className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
             <div>
               <p className="font-semibold text-white">Ready for Android Studio!</p>
-              <p className="text-xs text-emerald-300/80 mt-0.5">
+              <p className="text-xs text-emerald-200/90 mt-0.5">
                 DriveSafe AI uses standard React + Vite camera & location APIs. You can wrap it into an Android Studio APK using Capacitor in under 2 minutes.
               </p>
             </div>
           </div>
 
           {/* Tab Navigation */}
-          <div className="flex items-center gap-1 border-b border-slate-800 pb-2">
+          <div className="flex items-center gap-1 border-b border-white/10 pb-2 overflow-x-auto">
             <button
               onClick={() => setActiveTab('commands')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-xl font-medium transition-all flex items-center gap-1.5 whitespace-nowrap ${
                 activeTab === 'commands'
-                  ? 'bg-emerald-600 text-white font-semibold'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  ? 'bg-emerald-600 text-white font-semibold shadow-lg shadow-emerald-950/50 border border-emerald-400/40'
+                  : 'text-slate-300 hover:text-white hover:bg-white/10'
               }`}
             >
               <Terminal className="w-4 h-4" /> 1. Build Commands
             </button>
             <button
               onClick={() => setActiveTab('config')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 whitespace-nowrap ${
                 activeTab === 'config'
-                  ? 'bg-emerald-600 text-white font-semibold'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  ? 'bg-emerald-600 text-white font-semibold shadow-lg shadow-emerald-950/50 border border-emerald-400/40'
+                  : 'text-slate-300 hover:text-white hover:bg-white/10'
               }`}
             >
               <Layers className="w-4 h-4" /> 2. capacitor.config.json
             </button>
             <button
               onClick={() => setActiveTab('manifest')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 whitespace-nowrap ${
                 activeTab === 'manifest'
-                  ? 'bg-emerald-600 text-white font-semibold'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  ? 'bg-emerald-600 text-white font-semibold shadow-lg shadow-emerald-950/50 border border-emerald-400/40'
+                  : 'text-slate-300 hover:text-white hover:bg-white/10'
               }`}
             >
               <Code className="w-4 h-4" /> 3. AndroidManifest.xml
             </button>
             <button
               onClick={() => setActiveTab('activity')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 ${
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 whitespace-nowrap ${
                 activeTab === 'activity'
-                  ? 'bg-emerald-600 text-white font-semibold'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800'
+                  ? 'bg-emerald-600 text-white font-semibold shadow-lg shadow-emerald-950/50 border border-emerald-400/40'
+                  : 'text-slate-300 hover:text-white hover:bg-white/10'
               }`}
             >
               <Smartphone className="w-4 h-4" /> 4. MainActivity.kt
@@ -196,13 +196,13 @@ class MainActivity : BridgeActivity() {
           <div className="relative">
             {activeTab === 'commands' && (
               <div>
-                <p className="text-xs text-slate-400 mb-2 font-medium">Run these terminal commands in your exported project folder:</p>
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-emerald-300 whitespace-pre-wrap overflow-x-auto leading-relaxed">
+                <p className="text-xs text-slate-300 mb-2 font-medium">Run these terminal commands in your exported project folder:</p>
+                <div className="bg-slate-950/90 p-4 rounded-2xl border border-white/10 font-mono text-xs text-emerald-300 whitespace-pre-wrap overflow-x-auto leading-relaxed backdrop-blur-md">
                   {commandSnippet}
                 </div>
                 <button
                   onClick={() => handleCopy(commandSnippet, 'cmd')}
-                  className="mt-2.5 flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold"
+                  className="mt-2.5 flex items-center gap-1.5 px-3.5 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/10 rounded-xl text-xs font-semibold shadow-md transition-all"
                 >
                   {copiedTab === 'cmd' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
                   <span>{copiedTab === 'cmd' ? 'Copied Commands!' : 'Copy Terminal Commands'}</span>
@@ -212,13 +212,13 @@ class MainActivity : BridgeActivity() {
 
             {activeTab === 'config' && (
               <div>
-                <p className="text-xs text-slate-400 mb-2 font-medium">Place this file at project root as <code className="text-emerald-400">capacitor.config.json</code>:</p>
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-indigo-300 whitespace-pre-wrap overflow-x-auto">
+                <p className="text-xs text-slate-300 mb-2 font-medium">Place this file at project root as <code className="text-emerald-400">capacitor.config.json</code>:</p>
+                <div className="bg-slate-950/90 p-4 rounded-2xl border border-white/10 font-mono text-xs text-blue-300 whitespace-pre-wrap overflow-x-auto backdrop-blur-md">
                   {capacitorConfig}
                 </div>
                 <button
                   onClick={() => handleCopy(capacitorConfig, 'cfg')}
-                  className="mt-2.5 flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold"
+                  className="mt-2.5 flex items-center gap-1.5 px-3.5 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/10 rounded-xl text-xs font-semibold shadow-md transition-all"
                 >
                   {copiedTab === 'cfg' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
                   <span>{copiedTab === 'cfg' ? 'Copied Config!' : 'Copy capacitor.config.json'}</span>
@@ -228,13 +228,13 @@ class MainActivity : BridgeActivity() {
 
             {activeTab === 'manifest' && (
               <div>
-                <p className="text-xs text-slate-400 mb-2 font-medium">Place this inside <code className="text-emerald-400">android/app/src/main/AndroidManifest.xml</code>:</p>
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-amber-200 whitespace-pre-wrap overflow-x-auto max-h-60">
+                <p className="text-xs text-slate-300 mb-2 font-medium">Place this inside <code className="text-emerald-400">android/app/src/main/AndroidManifest.xml</code>:</p>
+                <div className="bg-slate-950/90 p-4 rounded-2xl border border-white/10 font-mono text-xs text-amber-200 whitespace-pre-wrap overflow-x-auto max-h-60 backdrop-blur-md">
                   {manifestXml}
                 </div>
                 <button
                   onClick={() => handleCopy(manifestXml, 'manifest')}
-                  className="mt-2.5 flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold"
+                  className="mt-2.5 flex items-center gap-1.5 px-3.5 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/10 rounded-xl text-xs font-semibold shadow-md transition-all"
                 >
                   {copiedTab === 'manifest' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
                   <span>{copiedTab === 'manifest' ? 'Copied Manifest!' : 'Copy AndroidManifest.xml'}</span>
@@ -244,13 +244,13 @@ class MainActivity : BridgeActivity() {
 
             {activeTab === 'activity' && (
               <div>
-                <p className="text-xs text-slate-400 mb-2 font-medium">Place this inside <code className="text-emerald-400">android/app/src/main/java/com/drivesafe/ai/MainActivity.kt</code>:</p>
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 font-mono text-xs text-sky-300 whitespace-pre-wrap overflow-x-auto">
+                <p className="text-xs text-slate-300 mb-2 font-medium">Place this inside <code className="text-emerald-400">android/app/src/main/java/com/drivesafe/ai/MainActivity.kt</code>:</p>
+                <div className="bg-slate-950/90 p-4 rounded-2xl border border-white/10 font-mono text-xs text-sky-300 whitespace-pre-wrap overflow-x-auto backdrop-blur-md">
                   {kotlinMainActivity}
                 </div>
                 <button
                   onClick={() => handleCopy(kotlinMainActivity, 'act')}
-                  className="mt-2.5 flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-semibold"
+                  className="mt-2.5 flex items-center gap-1.5 px-3.5 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/10 rounded-xl text-xs font-semibold shadow-md transition-all"
                 >
                   {copiedTab === 'act' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
                   <span>{copiedTab === 'act' ? 'Copied Kotlin Activity!' : 'Copy MainActivity.kt'}</span>
@@ -261,11 +261,11 @@ class MainActivity : BridgeActivity() {
         </div>
 
         {/* Modal Footer */}
-        <div className="p-4 bg-slate-900 border-t border-slate-800 flex justify-between items-center">
-          <p className="text-xs text-slate-500 hidden sm:block">Export project via Top Right Menu &gt; Export to ZIP/GitHub</p>
+        <div className="p-4 backdrop-blur-md bg-white/5 border-t border-white/10 flex justify-between items-center">
+          <p className="text-xs text-slate-400 hidden sm:block">Export project via Top Right Menu &gt; Export to ZIP/GitHub</p>
           <button
             onClick={onClose}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl transition-all shadow-md"
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs rounded-xl transition-all shadow-lg border border-emerald-400/30"
           >
             Got it, Close Guide
           </button>

@@ -225,9 +225,9 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
   };
 
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col justify-between h-full">
+    <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-4 shadow-2xl shadow-black/50 flex flex-col justify-between h-full">
       {/* Video / Camera Canvas Container */}
-      <div className="relative w-full aspect-video bg-slate-950 rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center">
+      <div className="relative w-full aspect-video bg-slate-950/80 rounded-2xl overflow-hidden border border-white/10 flex items-center justify-center">
         {isMonitoring ? (
           <>
             <video
@@ -242,7 +242,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             <div className={`absolute inset-4 border-2 rounded-xl pointer-events-none transition-all ${
               driverState.alertLevel === 'RED' ? 'border-red-500 bg-red-500/10 animate-pulse' :
               driverState.alertLevel === 'YELLOW' ? 'border-amber-400 bg-amber-400/5' :
-              'border-emerald-400/60'
+              'border-blue-400/60'
             }`}>
               {/* Bounding Box Corner Reticles */}
               <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-current"></div>
@@ -251,29 +251,29 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
               <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-current"></div>
 
               {/* Status Banner inside Video */}
-              <div className="absolute top-2 left-2 flex items-center gap-2 bg-slate-900/80 backdrop-blur-md px-2.5 py-1 rounded-lg border border-slate-700/50 text-xs">
+              <div className="absolute top-2 left-2 flex items-center gap-2 backdrop-blur-md bg-black/60 px-3 py-1 rounded-xl border border-white/20 text-xs shadow-lg">
                 <span className={`w-2 h-2 rounded-full ${
                   driverState.alertLevel === 'RED' ? 'bg-red-500 animate-ping' :
                   driverState.alertLevel === 'YELLOW' ? 'bg-amber-400' : 'bg-emerald-400'
                 }`}></span>
-                <span className="font-mono text-slate-200">EAR: {driverState.ear.toFixed(2)}</span>
+                <span className="font-mono text-slate-100">EAR: {driverState.ear.toFixed(2)}</span>
               </div>
             </div>
 
             {/* Critical Alert Flasher */}
             {driverState.alertLevel === 'RED' && (
-              <div className="absolute inset-0 bg-red-600/30 backdrop-blur-[2px] flex flex-col items-center justify-center text-center p-4 animate-pulse">
-                <AlertOctagon className="w-14 h-14 text-white mb-2 animate-bounce" />
+              <div className="absolute inset-0 bg-red-600/40 backdrop-blur-sm flex flex-col items-center justify-center text-center p-4 animate-pulse">
+                <AlertOctagon className="w-14 h-14 text-white mb-2 animate-bounce drop-shadow-[0_0_15px_rgba(255,255,255,0.8)]" />
                 <h3 className="text-xl font-black text-white tracking-wider uppercase">DROWSINESS DETECTED!</h3>
                 <p className="text-xs text-red-100 font-semibold mt-1">PULL OVER IMMEDIATELY TO A SAFE SPOT</p>
               </div>
             )}
           </>
         ) : (
-          <div className="text-center p-6 text-slate-500 flex flex-col items-center">
-            <Camera className="w-12 h-12 text-slate-700 mb-2" />
-            <p className="text-sm font-medium text-slate-400">Driver Camera Standby</p>
-            <p className="text-xs text-slate-600 mt-1 max-w-xs">
+          <div className="text-center p-6 text-slate-400 flex flex-col items-center">
+            <Camera className="w-12 h-12 text-slate-500 mb-2" />
+            <p className="text-sm font-medium text-slate-300">Driver Camera Standby</p>
+            <p className="text-xs text-slate-400 mt-1 max-w-xs">
               Click &quot;Start Monitor&quot; above to enable live AI vision & drowsiness detection.
             </p>
           </div>
@@ -281,10 +281,10 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
       </div>
 
       {/* AI Message & Status Bar */}
-      <div className="mt-3 bg-slate-950/80 rounded-xl p-3 border border-slate-800/80">
+      <div className="mt-3 backdrop-blur-md bg-white/5 rounded-xl p-3 border border-white/10">
         <div className="flex items-center justify-between text-xs mb-1">
-          <span className="text-slate-400 flex items-center gap-1 font-medium">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-400" /> AI Driver Observation
+          <span className="text-slate-300 flex items-center gap-1.5 font-medium">
+            <Sparkles className="w-3.5 h-3.5 text-blue-400" /> AI Driver Observation
           </span>
           <span className={`font-semibold ${
             driverState.alertLevel === 'RED' ? 'text-red-400' :
@@ -305,16 +305,16 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           onClick={handleAnalyzeFrame}
           disabled={isAiAnalyzing}
           id="btn-analyze-driver-frame"
-          className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:bg-indigo-900/50 text-white py-2 px-3 rounded-xl text-xs font-semibold shadow-md shadow-indigo-950/50 transition-all border border-indigo-400/30"
+          className="w-full flex items-center justify-center gap-2 backdrop-blur-md bg-blue-600/90 hover:bg-blue-500 disabled:bg-blue-900/50 text-white py-2 px-3 rounded-xl text-xs font-semibold shadow-lg shadow-blue-950/50 transition-all border border-blue-400/30"
         >
           {isAiAnalyzing ? (
             <>
-              <RefreshCw className="w-4 h-4 animate-spin text-indigo-200" />
+              <RefreshCw className="w-4 h-4 animate-spin text-blue-200" />
               <span>Analyzing Frame with Gemini AI...</span>
             </>
           ) : (
             <>
-              <Scan className="w-4 h-4 text-indigo-300" />
+              <Scan className="w-4 h-4 text-blue-200" />
               <span>Analyze Frame with Gemini Vision AI</span>
             </>
           )}
@@ -326,7 +326,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             onClick={triggerEyesClosed}
             id="btn-sim-eyes-closed"
             title="Simulate Eyes Closed"
-            className="bg-slate-800 hover:bg-red-950/60 hover:border-red-500/50 border border-slate-700/80 text-slate-300 hover:text-red-300 p-2 rounded-lg text-[10px] font-semibold transition-all flex flex-col items-center gap-1"
+            className="backdrop-blur-md bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/40 text-slate-200 hover:text-red-300 p-2 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1"
           >
             <Eye className="w-3.5 h-3.5 text-red-400" />
             <span>Eyes Closed</span>
@@ -336,7 +336,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             onClick={triggerYawn}
             id="btn-sim-yawn"
             title="Simulate Yawning"
-            className="bg-slate-800 hover:bg-amber-950/60 hover:border-amber-500/50 border border-slate-700/80 text-slate-300 hover:text-amber-300 p-2 rounded-lg text-[10px] font-semibold transition-all flex flex-col items-center gap-1"
+            className="backdrop-blur-md bg-white/5 hover:bg-amber-500/20 border border-white/10 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 p-2 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1"
           >
             <Zap className="w-3.5 h-3.5 text-amber-400" />
             <span>Yawn</span>
@@ -346,9 +346,9 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             onClick={triggerDistraction}
             id="btn-sim-distract"
             title="Simulate Distraction"
-            className="bg-slate-800 hover:bg-indigo-950/60 hover:border-indigo-500/50 border border-slate-700/80 text-slate-300 hover:text-indigo-300 p-2 rounded-lg text-[10px] font-semibold transition-all flex flex-col items-center gap-1"
+            className="backdrop-blur-md bg-white/5 hover:bg-blue-500/20 border border-white/10 hover:border-blue-500/40 text-slate-200 hover:text-blue-300 p-2 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1"
           >
-            <AlertOctagon className="w-3.5 h-3.5 text-indigo-400" />
+            <AlertOctagon className="w-3.5 h-3.5 text-blue-400" />
             <span>Distracted</span>
           </button>
 
@@ -356,7 +356,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             onClick={resetSimulation}
             id="btn-sim-reset"
             title="Reset Alertness"
-            className="bg-slate-800 hover:bg-emerald-950/60 hover:border-emerald-500/50 border border-slate-700/80 text-slate-300 hover:text-emerald-300 p-2 rounded-lg text-[10px] font-semibold transition-all flex flex-col items-center gap-1"
+            className="backdrop-blur-md bg-white/5 hover:bg-emerald-500/20 border border-white/10 hover:border-emerald-500/40 text-slate-200 hover:text-emerald-300 p-2 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1"
           >
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
             <span>Reset</span>
