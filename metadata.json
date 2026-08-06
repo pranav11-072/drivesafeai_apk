@@ -1,0 +1,12 @@
+{
+  "name": "DriveSafe AI",
+  "description": "AI-powered real-time driver safety monitor with camera drowsiness detection, distraction alerts, speed & trip analytics, emergency dispatch, and Android Studio / APK export guides.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation",
+    "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
