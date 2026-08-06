@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { Camera, Eye, AlertOctagon, Scan, RefreshCw, Smartphone, Zap, Sparkles, CheckCircle2 } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 import { DriverState } from '../types';
 import { soundManager } from '../utils/audio';
 
@@ -238,36 +239,126 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
               className="w-full h-full object-cover transform -scale-x-100"
             />
 
-            {/* AI Bounding Box Overlay Simulation */}
-            <div className={`absolute inset-4 border-2 rounded-xl pointer-events-none transition-all ${
-              driverState.alertLevel === 'RED' ? 'border-red-500 bg-red-500/10 animate-pulse' :
-              driverState.alertLevel === 'YELLOW' ? 'border-amber-400 bg-amber-400/5' :
-              'border-blue-400/60'
-            }`}>
-              {/* Bounding Box Corner Reticles */}
-              <div className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-current"></div>
-              <div className="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-current"></div>
-              <div className="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-current"></div>
-              <div className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-current"></div>
+            {/* AI Bounding Box Overlay Simulation with Framer Motion */}
+            <motion.div
+              key={driverState.alertLevel}
+              animate={
+                driverState.alertLevel === 'RED'
+                  ? {
+                      scale: [1, 1.02, 1],
+                      borderColor: ['rgba(239, 68, 68, 1)', 'rgba(248, 113, 113, 1)', 'rgba(239, 68, 68, 1)'],
+                      boxShadow: [
+                        '0 0 0px rgba(239, 68, 68, 0)',
+                        '0 0 30px rgba(239, 68, 68, 0.8)',
+                        '0 0 0px rgba(239, 68, 68, 0)'
+                      ],
+                      backgroundColor: ['rgba(239, 68, 68, 0.05)', 'rgba(239, 68, 68, 0.25)', 'rgba(239, 68, 68, 0.05)']
+                    }
+                  : driverState.alertLevel === 'YELLOW'
+                  ? {
+                      scale: [1, 1.01, 1],
+                      borderColor: ['rgba(251, 191, 36, 1)', 'rgba(254, 240, 138, 1)', 'rgba(251, 191, 36, 1)'],
+                      boxShadow: [
+                        '0 0 0px rgba(251, 191, 36, 0)',
+                        '0 0 18px rgba(251, 191, 36, 0.6)',
+                        '0 0 0px rgba(251, 191, 36, 0)'
+                      ],
+                      backgroundColor: 'rgba(251, 191, 36, 0.05)'
+                    }
+                  : {
+                      scale: 1,
+                      borderColor: 'rgba(96, 165, 250, 0.6)',
+                      boxShadow: '0 0 0px rgba(0,0,0,0)',
+                      backgroundColor: 'rgba(0,0,0,0)'
+                    }
+              }
+              transition={
+                driverState.alertLevel === 'RED'
+                  ? { duration: 0.5, repeat: Infinity, ease: 'easeInOut' }
+                  : driverState.alertLevel === 'YELLOW'
+                  ? { duration: 1.0, repeat: Infinity, ease: 'easeInOut' }
+                  : { duration: 0.3 }
+              }
+              className={`absolute inset-4 border-2 rounded-xl pointer-events-none ${
+                driverState.alertLevel === 'RED' ? 'text-red-500' :
+                driverState.alertLevel === 'YELLOW' ? 'text-amber-400' :
+                'text-blue-400'
+              }`}
+            >
+              {/* Bounding Box Corner Reticles with pulse */}
+              <motion.div
+                animate={driverState.alertLevel === 'RED' ? { scale: [1, 1.3, 1] } : {}}
+                transition={{ duration: 0.4, repeat: Infinity }}
+                className="absolute -top-1 -left-1 w-4 h-4 border-t-2 border-l-2 border-current"
+              ></motion.div>
+              <motion.div
+                animate={driverState.alertLevel === 'RED' ? { scale: [1, 1.3, 1] } : {}}
+                transition={{ duration: 0.4, repeat: Infinity }}
+                className="absolute -top-1 -right-1 w-4 h-4 border-t-2 border-r-2 border-current"
+              ></motion.div>
+              <motion.div
+                animate={driverState.alertLevel === 'RED' ? { scale: [1, 1.3, 1] } : {}}
+                transition={{ duration: 0.4, repeat: Infinity }}
+                className="absolute -bottom-1 -left-1 w-4 h-4 border-b-2 border-l-2 border-current"
+              ></motion.div>
+              <motion.div
+                animate={driverState.alertLevel === 'RED' ? { scale: [1, 1.3, 1] } : {}}
+                transition={{ duration: 0.4, repeat: Infinity }}
+                className="absolute -bottom-1 -right-1 w-4 h-4 border-b-2 border-r-2 border-current"
+              ></motion.div>
 
               {/* Status Banner inside Video */}
-              <div className="absolute top-2 left-2 flex items-center gap-2 backdrop-blur-md bg-black/60 px-3 py-1 rounded-xl border border-white/20 text-xs shadow-lg">
+              <motion.div
+                initial={{ opacity: 0, y: -5 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="absolute top-2 left-2 flex items-center gap-2 backdrop-blur-md bg-black/60 px-3 py-1 rounded-xl border border-white/20 text-xs shadow-lg"
+              >
                 <span className={`w-2 h-2 rounded-full ${
                   driverState.alertLevel === 'RED' ? 'bg-red-500 animate-ping' :
                   driverState.alertLevel === 'YELLOW' ? 'bg-amber-400' : 'bg-emerald-400'
                 }`}></span>
                 <span className="font-mono text-slate-100">EAR: {driverState.ear.toFixed(2)}</span>
-              </div>
-            </div>
+              </motion.div>
+            </motion.div>
 
-            {/* Critical Alert Flasher */}
-            {driverState.alertLevel === 'RED' && (
-              <div className="absolute inset-0 bg-red-600/40 backdrop-blur-sm flex flex-col items-center justify-center text-center p-4 animate-pulse">
-                <AlertOctagon className="w-14 h-14 text-white mb-2 animate-bounce drop-shadow-[0_0_15px_rgba(255,255,255,0.8)]" />
-                <h3 className="text-xl font-black text-white tracking-wider uppercase">DROWSINESS DETECTED!</h3>
-                <p className="text-xs text-red-100 font-semibold mt-1">PULL OVER IMMEDIATELY TO A SAFE SPOT</p>
-              </div>
-            )}
+            {/* Critical Alert Flasher with Framer Motion */}
+            <AnimatePresence>
+              {driverState.alertLevel === 'RED' && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.85 }}
+                  animate={{
+                    opacity: [0.85, 1, 0.85],
+                    scale: [1, 1.02, 1],
+                    backgroundColor: ['rgba(220,38,38,0.4)', 'rgba(239,68,68,0.7)', 'rgba(220,38,38,0.4)']
+                  }}
+                  exit={{ opacity: 0, scale: 0.9 }}
+                  transition={{
+                    duration: 0.45,
+                    repeat: Infinity,
+                    repeatType: 'reverse',
+                    ease: 'easeInOut'
+                  }}
+                  className="absolute inset-0 backdrop-blur-sm flex flex-col items-center justify-center text-center p-4 z-20"
+                >
+                  <motion.div
+                    animate={{ rotate: [-6, 6, -6], scale: [1, 1.15, 1] }}
+                    transition={{ duration: 0.35, repeat: Infinity, repeatType: 'reverse' }}
+                  >
+                    <AlertOctagon className="w-16 h-16 text-white mb-2 drop-shadow-[0_0_20px_rgba(255,255,255,1)]" />
+                  </motion.div>
+                  <motion.h3
+                    animate={{ scale: [1, 1.08, 1] }}
+                    transition={{ duration: 0.45, repeat: Infinity }}
+                    className="text-2xl font-black text-white tracking-wider uppercase drop-shadow-lg"
+                  >
+                    DROWSINESS DETECTED!
+                  </motion.h3>
+                  <p className="text-xs text-red-100 font-bold mt-1 tracking-wide bg-red-950/80 px-3 py-1 rounded-full border border-red-400/50 shadow-md">
+                    PULL OVER IMMEDIATELY TO A SAFE SPOT
+                  </p>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </>
         ) : (
           <div className="text-center p-6 text-slate-400 flex flex-col items-center">

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Header } from './components/Header';
+import { VoiceCommandControl } from './components/VoiceCommandControl';
 import { CameraHUD } from './components/CameraHUD';
 import { Speedometer } from './components/Speedometer';
 import { SafetyMetrics } from './components/SafetyMetrics';
@@ -22,7 +23,7 @@ export default function App() {
     isDistracted: false,
     isUsingPhone: false,
     alertLevel: 'GREEN',
-    lastAiMessage: 'Click "Start Monitor" to enable AI vision driver safety tracking.',
+    lastAiMessage: 'Click "Start Monitor" or say "Start DriveSafe" to enable AI vision driver safety tracking.',
     yawnCount: 0,
     microSleepCount: 0,
     distractionCount: 0,
@@ -41,9 +42,10 @@ export default function App() {
   const [isAndroidExportOpen, setIsAndroidExportOpen] = useState(false);
   const [isAICoachOpen, setIsAICoachOpen] = useState(false);
 
-  const handleToggleMonitoring = () => {
+  const handleToggleMonitoring = (forceState?: boolean) => {
     setDriverState(prev => {
-      const nextMonitoring = !prev.isMonitoring;
+      const nextMonitoring = forceState !== undefined ? forceState : !prev.isMonitoring;
+      if (nextMonitoring === prev.isMonitoring) return prev;
       if (nextMonitoring) {
         soundManager.speakText("DriveSafe AI monitoring active.");
       } else {
@@ -78,7 +80,7 @@ export default function App() {
       <div className="relative z-10">
         <Header
           isMonitoring={driverState.isMonitoring}
-          onToggleMonitoring={handleToggleMonitoring}
+          onToggleMonitoring={() => handleToggleMonitoring()}
           onOpenAndroidExport={() => setIsAndroidExportOpen(true)}
           onOpenAICoach={() => setIsAICoachOpen(true)}
           isMuted={isMuted}
@@ -89,6 +91,15 @@ export default function App() {
 
       {/* Main Responsive Dashboard Content */}
       <main className="relative z-10 flex-1 max-w-7xl w-full mx-auto p-3 sm:p-5 space-y-4">
+        {/* Voice Command Control HUD Bar */}
+        <VoiceCommandControl
+          isMonitoring={driverState.isMonitoring}
+          onToggleMonitoring={handleToggleMonitoring}
+          onToggleMute={handleToggleMute}
+          isMuted={isMuted}
+          onOpenAICoach={() => setIsAICoachOpen(true)}
+        />
+
         {/* Top Section: Camera Vision & Speedometer HUD */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {/* Driver Camera AI Monitor (Takes 2 columns on lg) */}
