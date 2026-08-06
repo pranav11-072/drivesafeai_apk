@@ -52,28 +52,50 @@ class SoundManager {
     }
   }
 
-  // Play urgent loud siren alarm on critical drowsiness (Red Alert)
+  // Play urgent loud multi-tone siren alarm on critical status (Red Alert / High Risk)
   public playCriticalAlarm() {
     if (this.isMuted) return;
     try {
       const ctx = this.getAudioContext();
-      const osc = ctx.createOscillator();
+      
+      // Dual-oscillator for rich, penetrating alarm timbre
+      const osc1 = ctx.createOscillator();
+      const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
 
-      osc.type = 'square';
-      osc.frequency.setValueAtTime(1000, ctx.currentTime);
-      osc.frequency.setValueAtTime(1400, ctx.currentTime + 0.1);
-      osc.frequency.setValueAtTime(1000, ctx.currentTime + 0.2);
-      osc.frequency.setValueAtTime(1400, ctx.currentTime + 0.3);
+      osc1.type = 'square';
+      osc2.type = 'sawtooth';
 
-      gain.gain.setValueAtTime(0.5, ctx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+      const now = ctx.currentTime;
 
-      osc.connect(gain);
+      // Piercing rapid frequency alternation: 900Hz <-> 1800Hz
+      osc1.frequency.setValueAtTime(900, now);
+      osc1.frequency.setValueAtTime(1800, now + 0.1);
+      osc1.frequency.setValueAtTime(900, now + 0.2);
+      osc1.frequency.setValueAtTime(2200, now + 0.3);
+      osc1.frequency.setValueAtTime(900, now + 0.4);
+
+      osc2.frequency.setValueAtTime(450, now);
+      osc2.frequency.setValueAtTime(900, now + 0.1);
+      osc2.frequency.setValueAtTime(450, now + 0.2);
+      osc2.frequency.setValueAtTime(1100, now + 0.3);
+
+      // Rapid pulsing gain envelope
+      gain.gain.setValueAtTime(0.6, now);
+      gain.gain.setValueAtTime(0.1, now + 0.1);
+      gain.gain.setValueAtTime(0.7, now + 0.15);
+      gain.gain.setValueAtTime(0.1, now + 0.25);
+      gain.gain.setValueAtTime(0.8, now + 0.3);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.6);
+
+      osc1.connect(gain);
+      osc2.connect(gain);
       gain.connect(ctx.destination);
 
-      osc.start();
-      osc.stop(ctx.currentTime + 0.5);
+      osc1.start(now);
+      osc2.start(now);
+      osc1.stop(now + 0.6);
+      osc2.stop(now + 0.6);
     } catch (e) {
       console.warn("Critical alarm audio error", e);
     }

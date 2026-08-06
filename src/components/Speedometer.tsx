@@ -34,7 +34,12 @@ export const Speedometer: React.FC<SpeedometerProps> = ({
         }
 
         const overSpeed = newSpeed > prev.speedLimitKmh;
-        if (overSpeed && !prev.isOverSpeed) {
+        const severeOverSpeed = newSpeed >= prev.speedLimitKmh + 20;
+
+        if (severeOverSpeed && !prev.isOverSpeed) {
+          soundManager.playCriticalAlarm();
+          soundManager.speakText("Critical speed alert! Slow down immediately!");
+        } else if (overSpeed && !prev.isOverSpeed) {
           soundManager.playWarningBeep();
         }
 
