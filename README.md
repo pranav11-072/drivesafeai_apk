@@ -88,10 +88,47 @@
 
 ---
 
-## 📱 Android APK Export with Capacitor
+## 💻 How to Run in Visual Studio Code (VS Code)
 
-To build an Android APK from this project:
+### Step 1: Open Project in VS Code
+1. Launch **Visual Studio Code**.
+2. Click **File > Open Folder...** (or `Ctrl+K Ctrl+O` / `Cmd+O`).
+3. Select the project root folder.
 
+### Step 2: Open Integrated Terminal
+- Press **`Ctrl + ~`** (or go to **Terminal > New Terminal** in the top menu bar).
+
+### Step 3: Install Dependencies
+In the VS Code terminal, run:
+```bash
+npm install
+```
+
+### Step 4: Configure `.env` File
+Create a new file named `.env` in the root folder and add your Gemini API key:
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+### Step 5: Start the App
+In the terminal, run:
+```bash
+npm run dev
+```
+
+### Step 6: View in Browser
+Open your browser and navigate to:
+```
+http://localhost:3000
+```
+
+> **Tip:** You can also press **`F5`** or go to the **Run & Debug** tab in VS Code and click **"Dev (Full Stack Express + Vite)"** to launch with debugger support!
+
+---
+
+## 📱 Mobile APK & Installation Options
+
+### Option A: Local Build with Capacitor & Android Studio
 ```bash
 # 1. Install Capacitor dependencies
 npm install @capacitor/core @capacitor/cli @capacitor/android
@@ -107,6 +144,26 @@ npx cap sync android
 # 4. Open in Android Studio to build APK
 npx cap open android
 ```
+
+### Option B: Alternatives Without Android Studio
+
+1. **PWABuilder.com (Cloud APK Generation - 1 Minute)**:
+   - Deploy your built web app to Vercel, Netlify, or Cloud Run.
+   - Enter your URL into [PWABuilder.com](https://www.pwabuilder.com/).
+   - Download the generated `.apk` and Google Play Store package (`.aab`) automatically!
+
+2. **PWA "Add to Home Screen" (Direct Mobile Installation)**:
+   - Open your deployed URL on any Android device in Chrome or Edge.
+   - Tap **⋮ (Menu) > Add to Home Screen** or **Install App**.
+   - Runs full-screen with offline support, camera access, speech recognition, and geolocation.
+
+3. **GitHub Actions Cloud CI/CD**:
+   - Push your code to GitHub with a `.github/workflows/android.yml` action.
+   - GitHub's cloud runners execute `./gradlew assembleDebug` and automatically attach the downloadable `.apk` file to your GitHub repository artifacts.
+
+4. **Command Line Build (No Studio GUI)**:
+   - Install Android Command Line Tools / SDK directly.
+   - Run `./gradlew assembleDebug` inside the `android/` directory to output `android/app/build/outputs/apk/debug/app-debug.apk`.
 
 ---
 

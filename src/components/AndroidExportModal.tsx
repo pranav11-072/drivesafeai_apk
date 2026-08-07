@@ -11,7 +11,7 @@ export const AndroidExportModal: React.FC<AndroidExportModalProps> = ({
   onClose,
 }) => {
   const [copiedTab, setCopiedTab] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<'commands' | 'config' | 'manifest' | 'activity'>('commands');
+  const [activeTab, setActiveTab] = useState<'commands' | 'config' | 'manifest' | 'activity' | 'alternatives'>('commands');
 
   if (!isOpen) return null;
 
@@ -190,6 +190,16 @@ class MainActivity : BridgeActivity() {
             >
               <Smartphone className="w-4 h-4" /> 4. MainActivity.kt
             </button>
+            <button
+              onClick={() => setActiveTab('alternatives')}
+              className={`px-3 py-1.5 rounded-lg font-medium transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                activeTab === 'alternatives'
+                  ? 'bg-blue-600 text-white font-semibold shadow-lg shadow-blue-950/50 border border-blue-400/40'
+                  : 'text-slate-300 hover:text-white hover:bg-white/10'
+              }`}
+            >
+              <Download className="w-4 h-4 text-blue-300" /> ⚡ No Android Studio Needed
+            </button>
           </div>
 
           {/* Active Tab Content Display */}
@@ -255,6 +265,42 @@ class MainActivity : BridgeActivity() {
                   {copiedTab === 'act' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
                   <span>{copiedTab === 'act' ? 'Copied Kotlin Activity!' : 'Copy MainActivity.kt'}</span>
                 </button>
+              </div>
+            )}
+
+            {activeTab === 'alternatives' && (
+              <div className="space-y-3">
+                <p className="text-xs text-slate-300 font-medium">Yes! You can build an APK or install the app on mobile <strong>without Android Studio</strong> using these 3 options:</p>
+
+                <div className="backdrop-blur-md bg-white/5 border border-white/10 rounded-2xl p-3.5 space-y-1.5">
+                  <div className="flex items-center gap-2 text-emerald-400 font-bold text-xs">
+                    <span className="p-1 bg-emerald-500/20 rounded-lg">1</span>
+                    <span>PWABuilder.com (Cloud APK Generator - 1 Minute)</span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed pl-6">
+                    Deploy or publish your app URL (Vercel, Netlify, Cloud Run), then paste the URL into <strong className="text-white">PWABuilder.com</strong>. It generates a downloadable Android APK &amp; Google Play Store bundle automatically without compiling locally!
+                  </p>
+                </div>
+
+                <div className="backdrop-blur-md bg-white/5 border border-white/10 rounded-2xl p-3.5 space-y-1.5">
+                  <div className="flex items-center gap-2 text-blue-400 font-bold text-xs">
+                    <span className="p-1 bg-blue-500/20 rounded-lg">2</span>
+                    <span>Progressive Web App (PWA) Direct Install</span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed pl-6">
+                    Open the app URL in Chrome on your Android phone, tap <strong className="text-white">⋮ (Menu) &gt; Add to Home Screen / Install App</strong>. It creates a native app icon, launches full screen, and accesses camera, GPS, and speech offline.
+                  </p>
+                </div>
+
+                <div className="backdrop-blur-md bg-white/5 border border-white/10 rounded-2xl p-3.5 space-y-1.5">
+                  <div className="flex items-center gap-2 text-amber-400 font-bold text-xs">
+                    <span className="p-1 bg-amber-500/20 rounded-lg">3</span>
+                    <span>GitHub Actions Cloud Build</span>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed pl-6">
+                    Push your exported project to GitHub with a simple GitHub Workflow (<code className="text-amber-300">.github/workflows/android.yml</code>). GitHub&apos;s free cloud runners run <code className="text-amber-300">./gradlew assembleDebug</code> automatically and give you a downloadable <code className="text-white">.apk</code> artifact.
+                  </p>
+                </div>
               </div>
             )}
           </div>
