@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 720" width="1280" height="720">
+  <!-- Dark Dashboard Background -->
+  <rect width="1280" height="720" fill="#0f172a" />
+  
+  <!-- Header Bar -->
+  <rect width="1280" height="64" fill="#1e293b" />
+  <circle cx="40" cy="32" r="18" fill="#2563eb" />
+  <path d="M32 28 L48 28 L40 40 Z" fill="#ffffff" />
+  <text x="70" y="38" font-family="sans-serif" font-size="20" font-weight="bold" fill="#f8fafc">DriveSafe AI</text>
+  <rect x="1100" y="18" width="140" height="28" rx="14" fill="#16a34a" />
+  <text x="1170" y="36" font-family="sans-serif" font-size="12" font-weight="bold" fill="#ffffff" text-anchor="middle">LIVE MONITORING</text>
+
+  <!-- Left Camera HUD Panel -->
+  <rect x="32" y="96" width="600" height="580" rx="16" fill="#1e293b" stroke="#334155" stroke-width="2" />
+  <rect x="48" y="112" width="568" height="420" rx="12" fill="#020617" />
+  <!-- AI Driver Face Frame -->
+  <rect x="180" y="160" width="300" height="320" rx="12" fill="none" stroke="#38bdf8" stroke-width="3" stroke-dasharray="8 8" />
+  <!-- Face Reticles -->
+  <path d="M180 180 V160 H200" fill="none" stroke="#38bdf8" stroke-width="4" />
+  <path d="M480 180 V160 H460" fill="none" stroke="#38bdf8" stroke-width="4" />
+  <path d="M180 460 V480 H200" fill="none" stroke="#38bdf8" stroke-width="4" />
+  <path d="M480 460 V480 H460" fill="none" stroke="#38bdf8" stroke-width="4" />
+  <!-- Eye Mesh Trackers -->
+  <circle cx="270" cy="280" r="14" fill="none" stroke="#38bdf8" stroke-width="2" />
+  <circle cx="270" cy="280" r="4" fill="#38bdf8" />
+  <circle cx="390" cy="280" r="14" fill="none" stroke="#38bdf8" stroke-width="2" />
+  <circle cx="390" cy="280" r="4" fill="#38bdf8" />
+  <!-- Status pill -->
+  <rect x="64" y="128" width="160" height="28" rx="6" fill="#0f172a" opacity="0.9" />
+  <text x="76" y="146" font-family="monospace" font-size="12" font-weight="bold" fill="#4ade80">● FACE TRACKED | EAR: 0.32</text>
+  <!-- AI Observation Box -->
+  <rect x="48" y="548" width="568" height="112" rx="12" fill="#0f172a" stroke="#3b82f6" stroke-width="1" />
+  <text x="72" y="580" font-family="sans-serif" font-size="14" font-weight="bold" fill="#60a5fa">✦ Gemini AI Driver Observation</text>
+  <text x="72" y="608" font-family="sans-serif" font-size="13" fill="#e2e8f0">Driver eyes open, posture upright. Alertness optimal at 98%.</text>
+
+  <!-- Right Telemetry Panel -->
+  <rect x="656" y="96" width="592" height="580" rx="16" fill="#1e293b" stroke="#334155" stroke-width="2" />
+  <!-- Stat Cards -->
+  <rect x="680" y="120" width="260" height="120" rx="12" fill="#0f172a" />
+  <text x="704" y="152" font-family="sans-serif" font-size="12" fill="#94a3b8">SAFETY SCORE</text>
+  <text x="704" y="200" font-family="sans-serif" font-size="36" font-weight="bold" fill="#4ade80">98 / 100</text>
+
+  <rect x="964" y="120" width="260" height="120" rx="12" fill="#0f172a" />
+  <text x="988" y="152" font-family="sans-serif" font-size="12" fill="#94a3b8">CURRENT SPEED</text>
+  <text x="988" y="200" font-family="sans-serif" font-size="36" font-weight="bold" fill="#38bdf8">65 MPH</text>
+
+  <!-- Graph Placeholder -->
+  <rect x="680" y="260" width="544" height="260" rx="12" fill="#0f172a" />
+  <text x="704" y="292" font-family="sans-serif" font-size="14" font-weight="bold" fill="#f1f5f9">Driver Alertness &amp; EAR Telemetry</text>
+  <path d="M704 460 Q780 440 850 400 T1000 420 T1180 340" fill="none" stroke="#2563eb" stroke-width="4" />
+  <path d="M704 460 Q780 440 850 400 T1000 420 T1180 340 L1180 480 L704 480 Z" fill="#2563eb" opacity="0.15" />
+
+  <!-- Action Controls -->
+  <rect x="680" y="540" width="260" height="56" rx="12" fill="#2563eb" />
+  <text x="810" y="574" font-family="sans-serif" font-size="15" font-weight="bold" fill="#ffffff" text-anchor="middle">Emergency SOS Alert</text>
+  <rect x="964" y="540" width="260" height="56" rx="12" fill="#334155" />
+  <text x="1094" y="574" font-family="sans-serif" font-size="15" font-weight="bold" fill="#f8fafc" text-anchor="middle">Voice AI Assistant</text>
+</svg>
