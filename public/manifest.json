@@ -3,16 +3,20 @@
   "name": "DriveSafe AI - Driver Safety Monitor",
   "short_name": "DriveSafe AI",
   "description": "AI-powered real-time driver safety monitor with camera drowsiness detection, distraction alerts, speed & trip analytics, emergency dispatch, and voice control.",
+  "lang": "en-US",
+  "dir": "ltr",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "display_override": [
     "standalone",
-    "minimal-ui"
+    "minimal-ui",
+    "window-controls-overlay"
   ],
   "orientation": "any",
   "background_color": "#0f172a",
   "theme_color": "#0f172a",
+  "iarc_rating_id": "e8f498c3-4d43-455a-b9c7-5a1d7f6a73c1",
   "prefer_related_applications": false,
   "related_applications": [],
   "categories": [
@@ -94,6 +98,63 @@
       "type": "image/png",
       "form_factor": "narrow",
       "label": "DriveSafe AI Mobile Driver Safety HUD"
+    }
+  ],
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  },
+  "file_handlers": [
+    {
+      "action": "/",
+      "accept": {
+        "application/json": [".json"],
+        "text/csv": [".csv"]
+      }
+    }
+  ],
+  "protocol_handlers": [
+    {
+      "protocol": "web+drivesafe",
+      "url": "/?protocol=%s"
+    }
+  ],
+  "share_target": {
+    "action": "/",
+    "method": "GET",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  },
+  "widgets": [
+    {
+      "name": "DriveSafe Quick Status",
+      "short_name": "DriveSafe",
+      "description": "Quick view driver alertness score",
+      "tag": "drivesafe-widget",
+      "template": "widget-template",
+      "ms_ac_template": "ms-ac-template.json",
+      "data": "widget-data.json",
+      "type": "application/json",
+      "screenshots": [
+        {
+          "src": "screenshot2.png",
+          "sizes": "640x1136",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
+  "edge_side_panel": {
+    "preferred_width": 400
+  },
+  "note_taking": {
+    "new_note_url": "/?action=note"
+  },
+  "scope_extensions": [
+    {
+      "origin": "*.run.app"
     }
   ]
 }
