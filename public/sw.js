@@ -5,7 +5,9 @@ const ASSETS_TO_CACHE = [
   '/manifest.json',
   '/icon.svg',
   '/icon-192.png',
-  '/icon-512.png'
+  '/icon-512.png',
+  '/screenshot1.png',
+  '/screenshot2.png'
 ];
 
 // Install Event - Cache Core Static Assets
