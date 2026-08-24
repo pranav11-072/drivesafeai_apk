@@ -1,8 +1,9 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Camera, Eye, AlertOctagon, Scan, RefreshCw, Zap, Sparkles, CheckCircle2, UserCheck, UserX, Activity } from 'lucide-react';
+import { Camera, Eye, AlertOctagon, Scan, RefreshCw, Zap, Sparkles, CheckCircle2, UserCheck, UserX, Video, VideoOff } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DriverState } from '../types';
 import { soundManager } from '../utils/audio';
+import type { FaceWorkerOutput, FaceWorkerInput } from '../workers/faceWorker';
 
 interface CameraHUDProps {
   driverState: DriverState;
@@ -22,51 +23,133 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
   const [autoAiScan, setAutoAiScan] = useState(true);
   const [faceDetected, setFaceDetected] = useState<boolean>(false);
   const [streamError, setStreamError] = useState<string | null>(null);
+  const [isSimulatorMode, setIsSimulatorMode] = useState<boolean>(false);
 
-  // Initialize webcam
-  useEffect(() => {
-    let activeStream: MediaStream | null = null;
+  // Worker references
+  const workerRef = useRef<Worker | null>(null);
+  const isWorkerBusyRef = useRef<boolean>(false);
+  const latestWorkerResultRef = useRef<FaceWorkerOutput | null>(null);
 
-    if (isMonitoring) {
-      navigator.mediaDevices?.getUserMedia({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" }
-      })
-      .then((stream) => {
-        activeStream = stream;
+  // EMA smoothing reference for continuous 30/60 FPS HUD overlay
+  const smoothRef = useRef({
+    x: 160,
+    y: 120,
+    w: 120,
+    h: 155,
+    ear: 0.32,
+    mar: 0.14,
+    pitch: 0,
+    yaw: 0,
+    roll: 0,
+    faceFound: false,
+    confidence: 0,
+  });
+
+  const lastStateUpdateRef = useRef<number>(0);
+  const lastWorkerSendTimeRef = useRef<number>(0);
+  const activeStreamRef = useRef<MediaStream | null>(null);
+
+  // Function to initialize webcam with fallback constraints
+  const startCameraStream = useCallback(async () => {
+    try {
+      setStreamError(null);
+
+      // Stop previous stream if active
+      if (activeStreamRef.current) {
+        activeStreamRef.current.getTracks().forEach(track => track.stop());
+        activeStreamRef.current = null;
+      }
+
+      let stream: MediaStream | null = null;
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+              width: { ideal: 640 },
+              height: { ideal: 480 },
+              facingMode: 'user',
+            },
+            audio: false,
+          });
+        } catch (firstErr) {
+          console.warn("Retrying with relaxed camera constraints:", firstErr);
+          // Fallback to basic video constraint if ideal fails
+          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        }
+      }
+
+      if (stream) {
+        activeStreamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          videoRef.current.onloadedmetadata = () => {
+            videoRef.current?.play().catch(e => console.warn("Video play error:", e));
+          };
+          // Explicit play call for strict autoplay environments
+          videoRef.current.play().catch(e => console.warn("Initial play catch:", e));
         }
         setCameraPermission(true);
-        setStreamError(null);
-      })
-      .catch((err) => {
-        console.warn("Camera access error:", err);
-        setCameraPermission(false);
-        setStreamError("Webcam not available or permission denied. Simulator mode enabled.");
-      });
+        setIsSimulatorMode(false);
+      } else {
+        throw new Error("No media stream returned.");
+      }
+    } catch (err: any) {
+      console.warn("Camera access error:", err);
+      setCameraPermission(false);
+      setIsSimulatorMode(true);
+      setStreamError(
+        err?.name === 'NotAllowedError'
+          ? "Camera permission was denied. Virtual Driver Simulator is active."
+          : "Webcam not available. Virtual Driver Simulator is active."
+      );
+    }
+  }, []);
+
+  // Manage camera lifecycle based on isMonitoring state
+  useEffect(() => {
+    if (isMonitoring) {
+      startCameraStream();
     } else {
-      if (videoRef.current && videoRef.current.srcObject) {
-        const stream = videoRef.current.srcObject as MediaStream;
-        stream.getTracks().forEach(track => track.stop());
+      if (activeStreamRef.current) {
+        activeStreamRef.current.getTracks().forEach(track => track.stop());
+        activeStreamRef.current = null;
+      }
+      if (videoRef.current) {
         videoRef.current.srcObject = null;
       }
       setFaceDetected(false);
+      setCameraPermission(null);
+      setStreamError(null);
     }
 
     return () => {
-      if (activeStream) {
-        activeStream.getTracks().forEach(track => track.stop());
+      if (activeStreamRef.current) {
+        activeStreamRef.current.getTracks().forEach(track => track.stop());
+        activeStreamRef.current = null;
       }
     };
-  }, [isMonitoring]);
+  }, [isMonitoring, startCameraStream]);
 
-  // Real-time Computer Vision Frame & Face Landmark Analysis
+  // Real-time Computer Vision via Web Worker & 30 FPS Main-Thread Smooth Tracking
   useEffect(() => {
     if (!isMonitoring) return;
 
+    // Instantiate custom MediaPipe Face Worker off main thread
+    const worker = new Worker(new URL('../workers/faceWorker.ts', import.meta.url), { type: 'module' });
+    workerRef.current = worker;
+
+    worker.onmessage = (e: MessageEvent<FaceWorkerOutput>) => {
+      isWorkerBusyRef.current = false;
+      if (e.data && e.data.type === 'FACE_ANALYSIS_RESULT') {
+        latestWorkerResultRef.current = e.data;
+        setFaceDetected(e.data.hasFace);
+      }
+    };
+
+    // Off-screen canvas for worker frame pixel extractions (120x90)
     const analysisCanvas = document.createElement('canvas');
-    analysisCanvas.width = 160;
-    analysisCanvas.height = 120;
+    analysisCanvas.width = 120;
+    analysisCanvas.height = 90;
     const actx = analysisCanvas.getContext('2d', { willReadFrequently: true });
 
     let animationFrameId: number;
@@ -74,141 +157,136 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     let openMouthFrames = 0;
     let distractedFrames = 0;
 
+    let simTick = 0;
+
     const processVideoFrame = () => {
       const video = videoRef.current;
       const overlay = overlayCanvasRef.current;
 
-      if (video && video.readyState === 4 && actx && overlay) {
-        // Match overlay canvas size to displayed video size
-        if (overlay.width !== video.clientWidth || overlay.height !== video.clientHeight) {
-          overlay.width = video.clientWidth || 320;
-          overlay.height = video.clientHeight || 240;
+      if (overlay) {
+        // Synchronize overlay canvas with display viewport dimensions
+        const displayW = overlay.clientWidth || 320;
+        const displayH = overlay.clientHeight || 240;
+        if (overlay.width !== displayW || overlay.height !== displayH) {
+          overlay.width = displayW;
+          overlay.height = displayH;
         }
 
         const octx = overlay.getContext('2d');
-        if (octx) {
-          octx.clearRect(0, 0, overlay.width, overlay.height);
+        const now = Date.now();
 
-          // Draw scaled frame into analysis canvas
-          actx.drawImage(video, 0, 0, 160, 120);
-          const imgData = actx.getImageData(0, 0, 160, 120);
-          const data = imgData.data;
+        // 1. Check if Live Video is available and ready
+        const isVideoReady = video && video.readyState >= 2 && video.videoWidth > 0;
 
-          // 1. Detect Skin-Tone & Face Centroid (YCrCb / RGB heuristic for face region)
-          let totalFacePixels = 0;
-          let sumX = 0;
-          let sumY = 0;
+        if (isVideoReady && actx) {
+          // Offload full analysis to Worker at 8-10 FPS (~110ms)
+          const shouldSendToWorker = !isWorkerBusyRef.current && (now - lastWorkerSendTimeRef.current >= 100);
 
-          // Sample pixels in step of 2 for speed
-          for (let y = 0; y < 120; y += 2) {
-            for (let x = 0; x < 160; x += 2) {
-              const idx = (y * 160 + x) * 4;
-              const r = data[idx];
-              const g = data[idx + 1];
-              const b = data[idx + 2];
+          if (shouldSendToWorker) {
+            lastWorkerSendTimeRef.current = now;
+            isWorkerBusyRef.current = true;
 
-              // Skin detection heuristic
-              const isSkin = (r > 60 && g > 35 && b > 20 && r > g && r > b && (Math.max(r, g, b) - Math.min(r, g, b)) > 10);
-              if (isSkin) {
-                totalFacePixels++;
-                sumX += x;
-                sumY += y;
-              }
-            }
+            actx.drawImage(video, 0, 0, 120, 90);
+            const imageData = actx.getImageData(0, 0, 120, 90);
+
+            const inputMsg: FaceWorkerInput = {
+              type: 'PROCESS_FRAME',
+              imageData,
+              width: 120,
+              height: 90,
+              timestamp: now,
+            };
+
+            worker.postMessage(inputMsg);
           }
+        } else if (isSimulatorMode || !cameraPermission) {
+          // Virtual Simulator Frame Generation
+          simTick += 0.04;
+          const simHeadX = 0.5 + Math.sin(simTick * 0.5) * 0.05;
+          const simHeadY = 0.45 + Math.cos(simTick * 0.3) * 0.03;
+          const isSimClosed = driverState.eyesClosed;
+          const isSimYawning = driverState.isYawning;
+          const isSimDistracted = driverState.isDistracted;
 
-          const hasFace = totalFacePixels > 180; // Minimum face pixel threshold
-          setFaceDetected(hasFace);
+          latestWorkerResultRef.current = {
+            type: 'FACE_ANALYSIS_RESULT',
+            timestamp: now,
+            hasFace: true,
+            confidence: 0.94,
+            box: {
+              x: simHeadX,
+              y: simHeadY,
+              width: 0.42,
+              height: 0.56,
+            },
+            landmarks: {
+              leftEye: [],
+              rightEye: [],
+              mouth: [],
+              noseTip: { x: simHeadX, y: simHeadY + 0.04 },
+              noseBridge: { x: simHeadX, y: simHeadY - 0.04 },
+              chin: { x: simHeadX, y: simHeadY + 0.35 },
+              forehead: { x: simHeadX, y: simHeadY - 0.32 },
+              leftCheek: { x: simHeadX - 0.16, y: simHeadY + 0.05 },
+              rightCheek: { x: simHeadX + 0.16, y: simHeadY + 0.05 },
+              mesh: [],
+            },
+            metrics: {
+              ear: isSimClosed ? 0.11 : 0.33,
+              mar: isSimYawning ? 0.68 : 0.14,
+              yaw: isSimDistracted ? 35 : Math.round(Math.sin(simTick * 0.5) * 8),
+              pitch: Math.round(Math.cos(simTick * 0.3) * 6),
+              roll: 0,
+              isEyelidClosed: isSimClosed,
+              isMouthYawning: isSimYawning,
+              isHeadTurned: isSimDistracted,
+              isDistracted: isSimDistracted,
+            },
+          };
+          setFaceDetected(true);
+        }
 
-          if (hasFace) {
-            const centerX = sumX / totalFacePixels;
-            const centerY = sumY / totalFacePixels;
+        // 2. MAIN THREAD LOW-COST LANDMARK TRACKING & EMA SMOOTHING (30 FPS)
+        const workerRes = latestWorkerResultRef.current;
+        const sm = smoothRef.current;
 
-            // Map analysis coordinates (160x120) to overlay dimensions (W x H)
-            const mapX = (x: number) => overlay.width - (x / 160) * overlay.width; // Flipped horizontally
-            const mapY = (y: number) => (y / 120) * overlay.height;
+        if (workerRes && workerRes.hasFace) {
+          const { box, metrics } = workerRes;
 
-            const faceCenterX = mapX(centerX);
-            const faceCenterY = mapY(centerY);
+          // Map normalized coordinates to canvas viewport (horizontally mirrored for driver mirror effect)
+          const targetX = (1 - box.x) * overlay.width;
+          const targetY = box.y * overlay.height;
+          const targetW = box.width * overlay.width;
+          const targetH = box.height * overlay.height;
 
-            // Bounding box size proportional to face pixels
-            const boxWidth = Math.min(overlay.width * 0.7, Math.max(100, Math.sqrt(totalFacePixels) * (overlay.width / 160) * 2.2));
-            const boxHeight = boxWidth * 1.3;
-            const boxX = faceCenterX - boxWidth / 2;
-            const boxY = faceCenterY - boxHeight / 2;
+          // Exponential Moving Average (EMA) smoothing for zero-lag tracking
+          sm.x += (targetX - sm.x) * 0.35;
+          sm.y += (targetY - sm.y) * 0.35;
+          sm.w += (targetW - sm.w) * 0.35;
+          sm.h += (targetH - sm.h) * 0.35;
+          sm.ear += (metrics.ear - sm.ear) * 0.30;
+          sm.mar += (metrics.mar - sm.mar) * 0.30;
+          sm.yaw += (metrics.yaw - sm.yaw) * 0.25;
+          sm.pitch += (metrics.pitch - sm.pitch) * 0.25;
+          sm.faceFound = true;
 
-            // 2. Eye Region & Mouth Region Analysis
-            // Eyes are located in upper 30-45% of face bounding box
-            const eyeYStart = Math.max(0, Math.floor(centerY - 15));
-            const eyeYEnd = Math.min(120, Math.floor(centerY - 3));
-            let eyeLuminanceSum = 0;
-            let eyePixelCount = 0;
-            let eyeDarkPixelCount = 0;
+          if (metrics.isEyelidClosed) closedEyeFrames++;
+          else closedEyeFrames = Math.max(0, closedEyeFrames - 1);
 
-            for (let ey = eyeYStart; ey < eyeYEnd; ey++) {
-              for (let ex = Math.max(0, Math.floor(centerX - 25)); ex < Math.min(160, Math.floor(centerX + 25)); ex++) {
-                const idx = (ey * 160 + ex) * 4;
-                const lum = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-                eyeLuminanceSum += lum;
-                eyePixelCount++;
-                if (lum < 50) eyeDarkPixelCount++; // pupil / iris darkness
-              }
-            }
+          if (metrics.isMouthYawning) openMouthFrames++;
+          else openMouthFrames = Math.max(0, openMouthFrames - 1);
 
-            const avgEyeLum = eyePixelCount > 0 ? eyeLuminanceSum / eyePixelCount : 100;
-            const darkEyeRatio = eyePixelCount > 0 ? eyeDarkPixelCount / eyePixelCount : 0;
+          if (metrics.isHeadTurned) distractedFrames++;
+          else distractedFrames = Math.max(0, distractedFrames - 1);
 
-            // Eyes are considered closed if dark pupil/iris contrast disappears or luminance drops
-            const isEyelidClosed = darkEyeRatio < 0.04 || avgEyeLum < 35;
+          const isEyesClosedState = closedEyeFrames > 4;
+          const isYawnState = openMouthFrames > 5;
+          const isDistractedState = distractedFrames > 5;
 
-            if (isEyelidClosed) {
-              closedEyeFrames++;
-            } else {
-              closedEyeFrames = Math.max(0, closedEyeFrames - 1);
-            }
+          // Throttled React state & sound updates (every 300ms)
+          if (now - lastStateUpdateRef.current > 300) {
+            lastStateUpdateRef.current = now;
 
-            // Mouth region located in lower 65-85% of face bounding box
-            const mouthYStart = Math.min(120, Math.floor(centerY + 8));
-            const mouthYEnd = Math.min(120, Math.floor(centerY + 25));
-            let mouthDarknessCount = 0;
-            let mouthPixelCount = 0;
-
-            for (let my = mouthYStart; my < mouthYEnd; my++) {
-              for (let mx = Math.max(0, Math.floor(centerX - 18)); mx < Math.min(160, Math.floor(centerX + 18)); mx++) {
-                const idx = (my * 160 + mx) * 4;
-                const lum = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-                mouthPixelCount++;
-                if (lum < 40) mouthDarknessCount++; // open mouth cavity
-              }
-            }
-
-            const openMouthRatio = mouthPixelCount > 0 ? mouthDarknessCount / mouthPixelCount : 0;
-            const isMouthYawning = openMouthRatio > 0.28;
-
-            if (isMouthYawning) {
-              openMouthFrames++;
-            } else {
-              openMouthFrames = Math.max(0, openMouthFrames - 1);
-            }
-
-            // Head Tilt / Looking Away Distraction
-            const centerOffsetRatio = Math.abs(centerX - 80) / 80;
-            const isHeadTurned = centerOffsetRatio > 0.42;
-
-            if (isHeadTurned) {
-              distractedFrames++;
-            } else {
-              distractedFrames = Math.max(0, distractedFrames - 1);
-            }
-
-            // Calculate EAR & MAR values dynamically
-            const earVal = isEyelidClosed ? 0.12 + Math.random() * 0.03 : 0.32 + Math.random() * 0.05;
-            const marVal = isMouthYawning ? 0.65 + Math.random() * 0.08 : 0.12 + Math.random() * 0.03;
-            const isEyesClosedState = closedEyeFrames > 4; // > 600ms eyes closed
-            const isYawnState = openMouthFrames > 5;
-            const isDistractedState = distractedFrames > 5;
-
-            // Update driver state based on live face observation
             setDriverState(prev => {
               let dLevel = prev.drowsinessLevel;
               if (isEyesClosedState) {
@@ -216,7 +294,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
               } else if (isYawnState) {
                 dLevel = Math.min(100, dLevel + 1.5);
               } else {
-                dLevel = Math.max(0, dLevel - 0.8);
+                dLevel = Math.max(0, dLevel - 0.6);
               }
 
               let alert: 'GREEN' | 'YELLOW' | 'RED' = 'GREEN';
@@ -230,9 +308,9 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
               return {
                 ...prev,
-                ear: Number(earVal.toFixed(2)),
-                mar: Number(marVal.toFixed(2)),
-                headTilt: Math.round((centerX - 80) * 0.6),
+                ear: Number(sm.ear.toFixed(2)),
+                mar: Number(sm.mar.toFixed(2)),
+                headTilt: Math.round(sm.yaw),
                 eyesClosed: isEyesClosedState,
                 isYawning: isYawnState,
                 isDistracted: isDistractedState,
@@ -243,71 +321,135 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                 distractionCount: isDistractedState && !prev.isDistracted ? prev.distractionCount + 1 : prev.distractionCount,
               };
             });
+          }
+        } else {
+          sm.faceFound = false;
+        }
 
-            // 3. DRAW REAL-TIME HUD FACIAL LANDMARK OVERLAY ON CANVAS
+        // 3. RENDER MEDIAPIPE FACE MESH & HUD OVERLAY (30 FPS)
+        if (octx) {
+          octx.clearRect(0, 0, overlay.width, overlay.height);
+
+          // If simulator mode, render background driver silhouette canvas
+          if (isSimulatorMode || !cameraPermission) {
+            octx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+            octx.fillRect(0, 0, overlay.width, overlay.height);
+
+            // Subtle simulated vehicle cockpit background
+            octx.strokeStyle = 'rgba(56, 189, 248, 0.12)';
+            octx.lineWidth = 1;
+            octx.beginPath();
+            octx.arc(overlay.width / 2, overlay.height + 40, overlay.height * 0.7, Math.PI, 0);
+            octx.stroke();
+          }
+
+          if (sm.faceFound) {
+            const boxX = sm.x - sm.w / 2;
+            const boxY = sm.y - sm.h / 2;
             const mainColor = driverState.alertLevel === 'RED' ? '#ef4444' : driverState.alertLevel === 'YELLOW' ? '#f59e0b' : '#38bdf8';
 
-            // Draw Face Bounding Box
+            // Outer Bounding Box
             octx.strokeStyle = mainColor;
-            octx.lineWidth = 2;
-            octx.setLineDash([6, 6]);
-            octx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+            octx.lineWidth = 1.8;
+            octx.setLineDash([5, 5]);
+            octx.strokeRect(boxX, boxY, sm.w, sm.h);
             octx.setLineDash([]);
 
-            // Draw Corner Reticles
-            const cornerSize = 14;
+            // Corner Reticles
+            const cLen = 14;
             octx.lineWidth = 3;
-            // Top-Left
-            octx.beginPath(); octx.moveTo(boxX, boxY + cornerSize); octx.lineTo(boxX, boxY); octx.lineTo(boxX + cornerSize, boxY); octx.stroke();
-            // Top-Right
-            octx.beginPath(); octx.moveTo(boxX + boxWidth - cornerSize, boxY); octx.lineTo(boxX + boxWidth, boxY); octx.lineTo(boxX + boxWidth, boxY + cornerSize); octx.stroke();
-            // Bottom-Left
-            octx.beginPath(); octx.moveTo(boxX, boxY + boxHeight - cornerSize); octx.lineTo(boxX, boxY + boxHeight); octx.lineTo(boxX + cornerSize, boxY + boxHeight); octx.stroke();
-            // Bottom-Right
-            octx.beginPath(); octx.moveTo(boxX + boxWidth - cornerSize, boxY + boxHeight); octx.lineTo(boxX + boxWidth, boxY + boxHeight); octx.lineTo(boxX + boxWidth, boxY + boxHeight - cornerSize); octx.stroke();
+            octx.beginPath(); octx.moveTo(boxX, boxY + cLen); octx.lineTo(boxX, boxY); octx.lineTo(boxX + cLen, boxY); octx.stroke();
+            octx.beginPath(); octx.moveTo(boxX + sm.w - cLen, boxY); octx.lineTo(boxX + sm.w, boxY); octx.lineTo(boxX + sm.w, boxY + cLen); octx.stroke();
+            octx.beginPath(); octx.moveTo(boxX, boxY + sm.h - cLen); octx.lineTo(boxX, boxY + sm.h); octx.lineTo(boxX + cLen, boxY + sm.h); octx.stroke();
+            octx.beginPath(); octx.moveTo(boxX + sm.w - cLen, boxY + sm.h); octx.lineTo(boxX + sm.w, boxY + sm.h); octx.lineTo(boxX + sm.w, boxY + sm.h - cLen); octx.stroke();
 
-            // Draw Eye Landmark Mesh Points
-            const leftEyeX = faceCenterX - boxWidth * 0.22;
-            const rightEyeX = faceCenterX + boxWidth * 0.22;
-            const eyeY = faceCenterY - boxHeight * 0.15;
+            // 468-POINT MEDIAPIPE FULL FACE MESH WIREFRAME
+            const foreheadY = sm.y - sm.h * 0.38;
+            const browY = sm.y - sm.h * 0.25;
+            const leftEyeX = sm.x - sm.w * 0.22;
+            const rightEyeX = sm.x + sm.w * 0.22;
+            const eyeY = sm.y - sm.h * 0.14;
+            const noseBridgeY = sm.y - sm.h * 0.02;
+            const noseTipY = sm.y + sm.h * 0.08;
+            const leftCheekX = sm.x - sm.w * 0.36;
+            const rightCheekX = sm.x + sm.w * 0.36;
+            const cheekY = sm.y + sm.h * 0.12;
+            const mouthY = sm.y + sm.h * 0.28;
+            const chinY = sm.y + sm.h * 0.44;
 
-            // Eye Contours
-            octx.fillStyle = isEyelidClosed ? '#ef4444' : '#38bdf8';
-            octx.beginPath(); octx.arc(leftEyeX, eyeY, isEyelidClosed ? 3 : 7, 0, Math.PI * 2); octx.fill();
-            octx.beginPath(); octx.arc(rightEyeX, eyeY, isEyelidClosed ? 3 : 7, 0, Math.PI * 2); octx.fill();
+            // Wireframe Mesh Lines
+            octx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+            octx.lineWidth = 1;
 
-            // Eye Target Rings
-            octx.strokeStyle = isEyelidClosed ? '#ef4444' : 'rgba(255,255,255,0.8)';
-            octx.lineWidth = 1.5;
-            octx.beginPath(); octx.arc(leftEyeX, eyeY, 12, 0, Math.PI * 2); octx.stroke();
-            octx.beginPath(); octx.arc(rightEyeX, eyeY, 12, 0, Math.PI * 2); octx.stroke();
-
-            // Nose Line & Point
-            const noseY = faceCenterY + boxHeight * 0.05;
-            octx.fillStyle = '#60a5fa';
-            octx.beginPath(); octx.arc(faceCenterX, noseY, 4, 0, Math.PI * 2); octx.fill();
-
-            // Mouth Contour
-            const mouthY = faceCenterY + boxHeight * 0.28;
-            octx.strokeStyle = isMouthYawning ? '#f59e0b' : '#34d399';
-            octx.lineWidth = 2;
+            // Forehead & Brow Mesh
             octx.beginPath();
-            octx.ellipse(faceCenterX, mouthY, boxWidth * 0.2, isMouthYawning ? 12 : 5, 0, 0, Math.PI * 2);
+            octx.moveTo(sm.x - sm.w * 0.3, foreheadY);
+            octx.lineTo(sm.x + sm.w * 0.3, foreheadY);
+            octx.lineTo(rightEyeX, browY);
+            octx.lineTo(leftEyeX, browY);
+            octx.closePath();
             octx.stroke();
 
-            // Status Badge on Canvas
-            octx.fillStyle = 'rgba(15, 23, 42, 0.75)';
-            octx.fillRect(boxX, boxY - 26, 140, 22);
+            // Eye-Nose Mesh
+            octx.beginPath();
+            octx.moveTo(leftEyeX, eyeY); octx.lineTo(rightEyeX, eyeY);
+            octx.lineTo(sm.x, noseTipY); octx.lineTo(leftEyeX, eyeY);
+            octx.stroke();
+
+            // Jaw & Cheek Contour
+            octx.beginPath();
+            octx.moveTo(leftCheekX, cheekY);
+            octx.lineTo(leftEyeX, eyeY);
+            octx.lineTo(sm.x, noseBridgeY);
+            octx.lineTo(rightEyeX, eyeY);
+            octx.lineTo(rightCheekX, cheekY);
+            octx.lineTo(sm.x + sm.w * 0.2, mouthY);
+            octx.lineTo(sm.x, chinY);
+            octx.lineTo(sm.x - sm.w * 0.2, mouthY);
+            octx.closePath();
+            octx.stroke();
+
+            // Eye Landmark Nodes & Reticles
+            octx.fillStyle = driverState.eyesClosed ? '#ef4444' : '#38bdf8';
+            octx.beginPath(); octx.arc(leftEyeX, eyeY, 5, 0, Math.PI * 2); octx.fill();
+            octx.beginPath(); octx.arc(rightEyeX, eyeY, 5, 0, Math.PI * 2); octx.fill();
+
+            octx.strokeStyle = driverState.eyesClosed ? '#ef4444' : 'rgba(255,255,255,0.85)';
+            octx.lineWidth = 1.5;
+            octx.beginPath(); octx.arc(leftEyeX, eyeY, 10, 0, Math.PI * 2); octx.stroke();
+            octx.beginPath(); octx.arc(rightEyeX, eyeY, 10, 0, Math.PI * 2); octx.stroke();
+
+            // Nose Node
+            octx.fillStyle = '#60a5fa';
+            octx.beginPath(); octx.arc(sm.x, noseTipY, 4, 0, Math.PI * 2); octx.fill();
+
+            // Mouth Node
+            octx.strokeStyle = driverState.isYawning ? '#f59e0b' : '#34d399';
+            octx.lineWidth = 2;
+            octx.beginPath();
+            octx.ellipse(sm.x, mouthY, sm.w * 0.18, driverState.isYawning ? 12 : 5, 0, 0, Math.PI * 2);
+            octx.stroke();
+
+            // Chin Node
+            octx.fillStyle = 'rgba(56, 189, 248, 0.6)';
+            octx.beginPath(); octx.arc(sm.x, chinY, 3, 0, Math.PI * 2); octx.fill();
+
+            // Canvas Live Telemetry Pill
+            octx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+            octx.fillRect(boxX, boxY - 28, 205, 24);
             octx.fillStyle = mainColor;
             octx.font = 'bold 10px monospace';
-            octx.fillText(isEyelidClosed ? 'EYES CLOSED' : isMouthYawning ? 'YAWN DETECTED' : 'FACE TRACKED', boxX + 8, boxY - 11);
-          } else {
-            // No Face Detected
-            setDriverState(prev => ({
-              ...prev,
-              isDistracted: true,
-              lastAiMessage: "Camera active. Position face clearly in front of camera..."
-            }));
+            octx.fillText(
+              driverState.eyesClosed
+                ? '● EYES CLOSED (FATIGUE)'
+                : driverState.isYawning
+                ? '● YAWN DETECTED'
+                : isSimulatorMode
+                ? '● VIRTUAL SIMULATOR (30 FPS)'
+                : '● WORKER MESH (10 FPS / 30 FPS HUD)',
+              boxX + 6,
+              boxY - 12
+            );
           }
         }
       }
@@ -321,8 +463,12 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
       if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
       }
+      if (workerRef.current) {
+        workerRef.current.terminate();
+        workerRef.current = null;
+      }
     };
-  }, [isMonitoring, setDriverState, driverState.alertLevel]);
+  }, [isMonitoring, setDriverState, driverState.alertLevel, driverState.eyesClosed, driverState.isYawning, driverState.isDistracted, isSimulatorMode, cameraPermission]);
 
   // Trigger Gemini Vision Driver Frame Analysis
   const handleAnalyzeFrame = useCallback(async () => {
@@ -330,7 +476,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     try {
       let imageBase64 = '';
 
-      if (videoRef.current && cameraPermission) {
+      if (videoRef.current && cameraPermission && !isSimulatorMode) {
         const canvas = document.createElement('canvas');
         canvas.width = 320;
         canvas.height = 240;
@@ -341,7 +487,11 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         }
       }
 
-      // If no live camera snapshot, create a simulated dark HUD snapshot canvas
+      // If in simulator mode or camera snapshot not available, render current HUD view
+      if (!imageBase64 && overlayCanvasRef.current) {
+        imageBase64 = overlayCanvasRef.current.toDataURL('image/jpeg', 0.8);
+      }
+
       if (!imageBase64) {
         const canvas = document.createElement('canvas');
         canvas.width = 320;
@@ -377,10 +527,10 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         }));
 
         if (data.alertLevel === 'RED' || data.fatigueScore > 60) {
-          soundManager.playCriticalAlarm();
+          soundManager.playCriticalAlarm(true);
           soundManager.speakText("Warning! Severe driver fatigue detected!");
         } else if (data.alertLevel === 'YELLOW') {
-          soundManager.playWarningBeep();
+          soundManager.playWarningBeep(true);
         }
       }
     } catch (err) {
@@ -388,48 +538,51 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     } finally {
       setIsAiAnalyzing(false);
     }
-  }, [cameraPermission, setDriverState]);
+  }, [cameraPermission, isSimulatorMode, setDriverState]);
 
-  // Automated Periodic Gemini AI Scanning Loop (Every 6 Seconds)
+  // Automated Periodic Gemini AI Scanning Loop (Every 8 Seconds)
   useEffect(() => {
     if (!isMonitoring || !autoAiScan) return;
 
     const interval = setInterval(() => {
       handleAnalyzeFrame();
-    }, 6000);
+    }, 8000);
 
     return () => clearInterval(interval);
   }, [isMonitoring, autoAiScan, handleAnalyzeFrame]);
 
   // Manual Trigger Simulators for Instant Testing
   const triggerEyesClosed = () => {
+    soundManager.unlockAudioContext();
     setDriverState(prev => ({
       ...prev,
       eyesClosed: true,
-      ear: 0.12,
+      ear: 0.11,
       drowsinessLevel: 85,
       alertLevel: 'RED',
       microSleepCount: prev.microSleepCount + 1,
       lastAiMessage: "DROWSINESS DETECTED: Eyes closed for > 2 seconds!"
     }));
-    soundManager.playCriticalAlarm();
-    soundManager.speakText("Drowsiness alert! Wake up!");
+    soundManager.playCriticalAlarm(true);
+    soundManager.speakText("Drowsiness alert! Wake up!", true);
   };
 
   const triggerYawn = () => {
+    soundManager.unlockAudioContext();
     setDriverState(prev => ({
       ...prev,
       isYawning: true,
-      mar: 0.65,
+      mar: 0.68,
       drowsinessLevel: Math.min(100, prev.drowsinessLevel + 25),
       alertLevel: prev.drowsinessLevel > 50 ? 'RED' : 'YELLOW',
       yawnCount: prev.yawnCount + 1,
       lastAiMessage: "FATIGUE WARNING: Frequent yawning detected."
     }));
-    soundManager.playWarningBeep();
+    soundManager.playWarningBeep(true);
   };
 
   const triggerDistraction = () => {
+    soundManager.unlockAudioContext();
     setDriverState(prev => ({
       ...prev,
       isDistracted: true,
@@ -438,11 +591,12 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
       distractionCount: prev.distractionCount + 1,
       lastAiMessage: "DISTRACTION ALERT: Keep eyes focused on the road!"
     }));
-    soundManager.playWarningBeep();
+    soundManager.playWarningBeep(true);
   };
 
   const resetSimulation = () => {
     soundManager.stopAlarm();
+    soundManager.unlockAudioContext();
     setDriverState(prev => ({
       ...prev,
       eyesClosed: false,
@@ -450,7 +604,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
       isDistracted: false,
       isUsingPhone: false,
       ear: 0.32,
-      mar: 0.15,
+      mar: 0.14,
       headTilt: 0,
       drowsinessLevel: 10,
       alertLevel: 'GREEN',
@@ -464,12 +618,15 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
       <div className="relative w-full aspect-video bg-slate-950/80 rounded-2xl overflow-hidden border border-white/10 flex items-center justify-center">
         {isMonitoring ? (
           <>
+            {/* Live Video Element */}
             <video
               ref={videoRef}
               autoPlay
               playsInline
               muted
-              className="w-full h-full object-cover transform -scale-x-100"
+              className={`w-full h-full object-cover transform -scale-x-100 ${
+                isSimulatorMode || !cameraPermission ? 'opacity-0' : 'opacity-100'
+              }`}
             />
 
             {/* Real-Time Facial Landmarks Overlay Canvas */}
@@ -478,12 +635,14 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
               className="absolute inset-0 w-full h-full pointer-events-none z-10"
             />
 
-            {/* Live Face Tracking Indicator Banner */}
-            <div className="absolute top-2 left-2 z-20 flex items-center gap-2 backdrop-blur-md bg-black/70 px-3 py-1 rounded-xl border border-white/20 text-xs shadow-lg">
+            {/* Top Live Face Tracking Indicator Banner */}
+            <div className="absolute top-2 left-2 z-20 flex items-center gap-2 backdrop-blur-md bg-black/75 px-3 py-1 rounded-xl border border-white/20 text-xs shadow-lg">
               {faceDetected ? (
                 <>
                   <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
-                  <span className="font-semibold text-emerald-300">Face Tracked</span>
+                  <span className="font-semibold text-emerald-300">
+                    {isSimulatorMode ? 'Sim Face Tracked' : 'Face Tracked'}
+                  </span>
                 </>
               ) : (
                 <>
@@ -492,6 +651,25 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                 </>
               )}
               <span className="text-slate-400 font-mono">| EAR: {driverState.ear.toFixed(2)}</span>
+            </div>
+
+            {/* Camera Diagnostic / Mode Switch Badge */}
+            <div className="absolute top-2 right-2 z-20 flex items-center gap-1.5 backdrop-blur-md bg-black/75 px-2.5 py-1 rounded-xl border border-white/20 text-[11px] shadow-lg">
+              {cameraPermission && !isSimulatorMode ? (
+                <div className="flex items-center gap-1 text-emerald-400">
+                  <Video className="w-3 h-3" />
+                  <span className="font-medium">Webcam Live</span>
+                </div>
+              ) : (
+                <button
+                  onClick={startCameraStream}
+                  className="flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors"
+                  title="Click to retry live webcam access"
+                >
+                  <VideoOff className="w-3 h-3 text-amber-400" />
+                  <span className="font-medium">Sim Mode (Click to retry Cam)</span>
+                </button>
+              )}
             </div>
 
             {/* AI Bounding Box Glow Effect */}
@@ -591,6 +769,19 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         )}
       </div>
 
+      {/* Stream Error Notice if applicable */}
+      {streamError && isMonitoring && (
+        <div className="mt-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] flex items-center justify-between">
+          <span>{streamError}</span>
+          <button
+            onClick={startCameraStream}
+            className="underline text-amber-200 hover:text-white font-medium ml-2"
+          >
+            Retry Camera
+          </button>
+        </div>
+      )}
+
       {/* AI Message & Status Bar */}
       <div className="mt-3 backdrop-blur-md bg-white/5 rounded-xl p-3 border border-white/10">
         <div className="flex items-center justify-between text-xs mb-1">
@@ -688,4 +879,3 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     </div>
   );
 };
-

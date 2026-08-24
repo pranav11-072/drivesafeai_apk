@@ -1,0 +1,7 @@
+{
+  "name": "DriveSafe AI",
+  "integrations": {
+    "capacitor": {}
+  },
+  "type": "react"
+}

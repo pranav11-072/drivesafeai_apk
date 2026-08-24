@@ -43,11 +43,13 @@ export default function App() {
   const [isAICoachOpen, setIsAICoachOpen] = useState(false);
 
   const handleToggleMonitoring = (forceState?: boolean) => {
+    soundManager.unlockAudioContext();
     setDriverState(prev => {
       const nextMonitoring = forceState !== undefined ? forceState : !prev.isMonitoring;
       if (nextMonitoring === prev.isMonitoring) return prev;
       if (nextMonitoring) {
-        soundManager.speakText("DriveSafe AI monitoring active.");
+        soundManager.playSystemChime();
+        soundManager.speakText("DriveSafe AI monitoring active.", true);
       } else {
         soundManager.stopAlarm();
       }
@@ -62,6 +64,7 @@ export default function App() {
   };
 
   const handleToggleMute = () => {
+    soundManager.unlockAudioContext();
     const nextMuted = !isMuted;
     setIsMuted(nextMuted);
     soundManager.setMuted(nextMuted);
@@ -81,7 +84,6 @@ export default function App() {
         <Header
           isMonitoring={driverState.isMonitoring}
           onToggleMonitoring={() => handleToggleMonitoring()}
-          onOpenAndroidExport={() => setIsAndroidExportOpen(true)}
           onOpenAICoach={() => setIsAICoachOpen(true)}
           isMuted={isMuted}
           onToggleMute={handleToggleMute}

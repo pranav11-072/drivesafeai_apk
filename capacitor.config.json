@@ -1,0 +1,8 @@
+{
+  "appId": "com.drivesafe.ai",
+  "appName": "DriveSafe AI",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}

@@ -1,11 +1,11 @@
 import React from 'react';
-import { Shield, Smartphone, Bot, Volume2, VolumeX, AlertTriangle, Play, Square } from 'lucide-react';
+import { Shield, Bot, Volume2, VolumeX, AlertTriangle, Play, Square } from 'lucide-react';
 import { soundManager } from '../utils/audio';
 
 interface HeaderProps {
   isMonitoring: boolean;
   onToggleMonitoring: () => void;
-  onOpenAndroidExport: () => void;
+  onOpenAndroidExport?: () => void;
   onOpenAICoach: () => void;
   isMuted: boolean;
   onToggleMute: () => void;
@@ -15,7 +15,6 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({
   isMonitoring,
   onToggleMonitoring,
-  onOpenAndroidExport,
   onOpenAICoach,
   isMuted,
   onToggleMute,
@@ -91,17 +90,6 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Bot className="w-4 h-4 text-indigo-400" />
             <span className="hidden md:inline">AI Safety Coach</span>
-          </button>
-
-          {/* Android APK Export Button */}
-          <button
-            onClick={onOpenAndroidExport}
-            id="btn-android-apk-export"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl backdrop-blur-md bg-white text-slate-950 hover:bg-slate-100 text-xs sm:text-sm font-semibold shadow-xl shadow-white/10 transition-all border border-white/40"
-          >
-            <Smartphone className="w-4 h-4 text-blue-600" />
-            <span className="hidden sm:inline">Export Android APK</span>
-            <span className="sm:hidden">APK</span>
           </button>
         </div>
       </div>
