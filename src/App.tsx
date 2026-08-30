@@ -6,6 +6,11 @@ import { Speedometer } from './components/Speedometer';
 import { SafetyMetrics } from './components/SafetyMetrics';
 import { EmergencySOS } from './components/EmergencySOS';
 import { TripTracker } from './components/TripTracker';
+import { RestStopNavigator } from './components/RestStopNavigator';
+import { AmbientCabinLight } from './components/AmbientCabinLight';
+import { CircadianPredictor } from './components/CircadianPredictor';
+import { IncidentRecorder } from './components/IncidentRecorder';
+import { TripScorecard } from './components/TripScorecard';
 import { AndroidExportModal } from './components/AndroidExportModal';
 import { AICoachModal } from './components/AICoachModal';
 import { DriverState, SpeedData } from './types';
@@ -41,6 +46,7 @@ export default function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [isAndroidExportOpen, setIsAndroidExportOpen] = useState(false);
   const [isAICoachOpen, setIsAICoachOpen] = useState(false);
+  const [isScorecardOpen, setIsScorecardOpen] = useState(false);
 
   const handleToggleMonitoring = (forceState?: boolean) => {
     soundManager.unlockAudioContext();
@@ -85,6 +91,7 @@ export default function App() {
           isMonitoring={driverState.isMonitoring}
           onToggleMonitoring={() => handleToggleMonitoring()}
           onOpenAICoach={() => setIsAICoachOpen(true)}
+          onOpenScorecard={() => setIsScorecardOpen(true)}
           isMuted={isMuted}
           onToggleMute={handleToggleMute}
           alertLevel={driverState.alertLevel}
@@ -92,7 +99,7 @@ export default function App() {
       </div>
 
       {/* Main Responsive Dashboard Content */}
-      <main className="relative z-10 flex-1 max-w-7xl w-full mx-auto p-3 sm:p-5 space-y-4">
+      <main className="relative z-10 flex-1 max-w-7xl w-full mx-auto p-3 sm:p-5 space-y-5">
         {/* Voice Command Control HUD Bar */}
         <VoiceCommandControl
           isMonitoring={driverState.isMonitoring}
@@ -131,11 +138,39 @@ export default function App() {
           />
           <EmergencySOS
             speedData={speedData}
+            driverState={driverState}
           />
           <TripTracker
             speedData={speedData}
             driverState={driverState}
             isMonitoring={driverState.isMonitoring}
+          />
+        </div>
+
+        {/* New Feature Section: Smart Rest Stop & Route Navigator + Ambient Cabin Light */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="lg:col-span-2">
+            <RestStopNavigator
+              driverState={driverState}
+              speedData={speedData}
+              onOpenAICoach={() => setIsAICoachOpen(true)}
+            />
+          </div>
+          <div className="lg:col-span-1">
+            <AmbientCabinLight
+              driverState={driverState}
+            />
+          </div>
+        </div>
+
+        {/* New Feature Section: Circadian Predictor + Incident Dashcam Recorder */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <CircadianPredictor
+            driverState={driverState}
+          />
+          <IncidentRecorder
+            driverState={driverState}
+            speedData={speedData}
           />
         </div>
       </main>
@@ -144,14 +179,31 @@ export default function App() {
       <footer className="border-t border-slate-900 bg-slate-950 py-3 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>DriveSafe AI • Real-Time Driver Safety & Drowsiness Alert System</span>
-          <button
-            onClick={() => setIsAndroidExportOpen(true)}
-            className="text-emerald-400 hover:underline font-semibold"
-          >
-            📱 Export to Android APK (Android Studio Setup)
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => setIsScorecardOpen(true)}
+              className="text-amber-400 hover:underline font-semibold"
+            >
+              🏆 View Trip Scorecard
+            </button>
+            <span className="text-slate-700">•</span>
+            <button
+              onClick={() => setIsAndroidExportOpen(true)}
+              className="text-emerald-400 hover:underline font-semibold"
+            >
+              📱 Export to Android APK
+            </button>
+          </div>
         </div>
       </footer>
+
+      {/* Trip Scorecard & Risk Summary Modal */}
+      <TripScorecard
+        isOpen={isScorecardOpen}
+        onClose={() => setIsScorecardOpen(false)}
+        driverState={driverState}
+        speedData={speedData}
+      />
 
       {/* Android Studio APK Export Modal */}
       <AndroidExportModal
@@ -167,3 +219,4 @@ export default function App() {
     </div>
   );
 }
+

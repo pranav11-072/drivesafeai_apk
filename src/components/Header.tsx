@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, Bot, Volume2, VolumeX, AlertTriangle, Play, Square } from 'lucide-react';
+import { Shield, Bot, Volume2, VolumeX, AlertTriangle, Play, Square, Award } from 'lucide-react';
 import { soundManager } from '../utils/audio';
 
 interface HeaderProps {
@@ -7,6 +7,7 @@ interface HeaderProps {
   onToggleMonitoring: () => void;
   onOpenAndroidExport?: () => void;
   onOpenAICoach: () => void;
+  onOpenScorecard: () => void;
   isMuted: boolean;
   onToggleMute: () => void;
   alertLevel: 'GREEN' | 'YELLOW' | 'RED';
@@ -16,6 +17,7 @@ export const Header: React.FC<HeaderProps> = ({
   isMonitoring,
   onToggleMonitoring,
   onOpenAICoach,
+  onOpenScorecard,
   isMuted,
   onToggleMute,
   alertLevel,
@@ -49,6 +51,16 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* Trip Scorecard Button */}
+          <button
+            onClick={onOpenScorecard}
+            id="btn-open-scorecard"
+            className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3 sm:py-2 rounded-xl backdrop-blur-md bg-amber-500/20 border border-amber-400/30 text-amber-300 hover:bg-amber-500/30 text-xs sm:text-sm font-medium transition-all shadow-lg shadow-amber-950/40"
+          >
+            <Award className="w-4 h-4 text-amber-400" />
+            <span className="hidden sm:inline">Trip Scorecard</span>
+          </button>
+
           {/* Monitoring Toggle Button */}
           <button
             onClick={onToggleMonitoring}
@@ -89,10 +101,11 @@ export const Header: React.FC<HeaderProps> = ({
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl backdrop-blur-md bg-indigo-500/20 border border-indigo-400/30 text-indigo-200 hover:bg-indigo-500/30 text-xs sm:text-sm font-medium transition-all shadow-lg shadow-indigo-950/40"
           >
             <Bot className="w-4 h-4 text-indigo-400" />
-            <span className="hidden md:inline">AI Safety Coach</span>
+            <span className="hidden md:inline">AI Coach</span>
           </button>
         </div>
       </div>
     </header>
   );
 };
+
