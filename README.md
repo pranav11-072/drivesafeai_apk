@@ -39,9 +39,6 @@
 - **One-Touch & Voice SOS**: Dispatch emergency notifications with current GPS location to saved emergency contacts.
 - **Contact Management**: Add and manage custom emergency contacts with phone numbers and relationships.
 
-### 🤖 Gemini AI Safety Coach (`AICoachModal`)
-- **Personalized Advice**: Conversational AI assistant providing customized guidance on fatigue management, rest stop planning, and safe driving habits.
-
 ### 📱 Android APK Export Ready (`AndroidExportModal`)
 - **Capacitor Integration Guide**: Comprehensive instructions, terminal commands, `capacitor.config.json`, `AndroidManifest.xml`, and `MainActivity.kt` code snippets to export the app to an Android APK via Android Studio.
 

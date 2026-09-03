@@ -1,26 +1,30 @@
 import React from 'react';
-import { Shield, Bot, Volume2, VolumeX, AlertTriangle, Play, Square, Award } from 'lucide-react';
+import { Shield, Volume2, VolumeX, AlertTriangle, Play, Square, Award } from 'lucide-react';
 import { soundManager } from '../utils/audio';
 
 interface HeaderProps {
   isMonitoring: boolean;
   onToggleMonitoring: () => void;
   onOpenAndroidExport?: () => void;
-  onOpenAICoach: () => void;
   onOpenScorecard: () => void;
   isMuted: boolean;
   onToggleMute: () => void;
   alertLevel: 'GREEN' | 'YELLOW' | 'RED';
+  cabinLightStatus?: 'connected' | 'off' | 'unavailable';
+  viewMode?: 'mobile' | 'desktop';
+  onToggleViewMode?: (mode: 'mobile' | 'desktop') => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
   isMonitoring,
   onToggleMonitoring,
-  onOpenAICoach,
   onOpenScorecard,
   isMuted,
   onToggleMute,
   alertLevel,
+  cabinLightStatus,
+  viewMode,
+  onToggleViewMode,
 }) => {
   return (
     <header className="backdrop-blur-xl bg-[#020617]/70 border-b border-white/10 sticky top-0 z-40 px-4 py-3 shadow-2xl">
@@ -51,6 +55,60 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Action Controls */}
         <div className="flex items-center gap-2 sm:gap-3">
+          {/* Mobile vs Desktop View Switcher */}
+          {onToggleViewMode && (
+            <div className="flex items-center p-0.5 rounded-xl bg-white/5 border border-white/10 text-xs font-mono">
+              <button
+                onClick={() => onToggleViewMode('mobile')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                  viewMode === 'mobile'
+                    ? 'bg-blue-600 text-white font-bold shadow-md shadow-blue-900/40'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Mobile Cockpit (Focuses strictly on 5 core features)"
+              >
+                📱 Mobile
+              </button>
+              <button
+                onClick={() => onToggleViewMode('desktop')}
+                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                  viewMode === 'desktop'
+                    ? 'bg-blue-600 text-white font-bold shadow-md shadow-blue-900/40'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+                title="Full Desktop Telematics"
+              >
+                💻 Desktop
+              </button>
+            </div>
+          )}
+
+          {/* Cabin Light Quick Status Pill */}
+          {cabinLightStatus && (
+            <div
+              id="header-cabin-light-status"
+              className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs font-mono"
+            >
+              <span className="text-slate-400 text-[10px] font-bold tracking-wider">CABIN LIGHT</span>
+              {cabinLightStatus === 'connected' ? (
+                <span className="flex items-center gap-1 text-emerald-300 text-[11px] font-bold">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                  ACTIVE
+                </span>
+              ) : cabinLightStatus === 'off' ? (
+                <span className="flex items-center gap-1 text-amber-300 text-[11px] font-bold">
+                  <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                  OFF
+                </span>
+              ) : (
+                <span className="flex items-center gap-1 text-slate-400 text-[11px] font-bold">
+                  <span className="w-2 h-2 rounded-full bg-slate-500"></span>
+                  UNAVAILABLE
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Trip Scorecard Button */}
           <button
             onClick={onOpenScorecard}
@@ -92,16 +150,6 @@ export const Header: React.FC<HeaderProps> = ({
             className="p-2 rounded-xl backdrop-blur-md bg-white/5 hover:bg-white/10 text-slate-300 transition-all border border-white/10"
           >
             {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
-          </button>
-
-          {/* AI Safety Coach Button */}
-          <button
-            onClick={onOpenAICoach}
-            id="btn-ai-coach"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl backdrop-blur-md bg-indigo-500/20 border border-indigo-400/30 text-indigo-200 hover:bg-indigo-500/30 text-xs sm:text-sm font-medium transition-all shadow-lg shadow-indigo-950/40"
-          >
-            <Bot className="w-4 h-4 text-indigo-400" />
-            <span className="hidden md:inline">AI Coach</span>
           </button>
         </div>
       </div>

@@ -70,7 +70,7 @@ export const TripScorecard: React.FC<TripScorecardProps> = ({
   const handleFetchAiSummary = async () => {
     setIsGeneratingAiSummary(true);
     try {
-      const res = await fetch('/api/ai/safety-coach', {
+      const res = await fetch('/api/ai/safety-assessment', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -290,7 +290,7 @@ export const TripScorecard: React.FC<TripScorecardProps> = ({
           <p className="text-xs text-slate-300 leading-relaxed font-sans">
             {aiAnalysis || (
               <span>
-                Based on your current telemetry profile (Score: <strong>{score}/100</strong>), you maintained safe headway with {driverState.microSleepCount} critical micro-sleep interruptions and {driverState.yawnCount} fatigue yawns. Click &quot;Generate AI Assessment&quot; for full multimodal coach recommendations.
+                Based on your current telemetry profile (Score: <strong>{score}/100</strong>), you maintained safe headway with {driverState.microSleepCount} critical micro-sleep interruptions and {driverState.yawnCount} fatigue yawns. Click &quot;Generate AI Assessment&quot; for full multimodal safety analysis and rest recommendations.
               </span>
             )}
           </p>

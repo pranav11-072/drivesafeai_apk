@@ -2,7 +2,9 @@ export type AlertLevel = 'GREEN' | 'YELLOW' | 'RED';
 
 export interface DriverState {
   isMonitoring: boolean;
+  driverPresent: boolean;
   drowsinessLevel: number; // 0 to 100
+  safetyScore: number; // 0 to 100 (real-time driver safety rating)
   ear: number; // Eye Aspect Ratio (0.0 to 0.4, < 0.20 means closed)
   mar: number; // Mouth Aspect Ratio (yawning)
   headTilt: number; // Distraction degree
@@ -10,20 +12,46 @@ export interface DriverState {
   isYawning: boolean;
   isDistracted: boolean;
   isUsingPhone: boolean;
+  abnormalBehavior: boolean; // Slumped posture, nodding off, erratic head movement
   alertLevel: AlertLevel;
   lastAiMessage: string;
+  lastEventTrigger?: string;
+  aiConfigured?: boolean;
   yawnCount: number;
   microSleepCount: number;
   distractionCount: number;
 }
 
+export interface GeminiFrameAnalysisResult {
+  driverDetected: boolean;
+  attention: 'focused' | 'distracted' | 'inattentive';
+  drowsiness: 'low' | 'medium' | 'high';
+  eyes: 'open' | 'closed' | 'drooping';
+  yawning: boolean;
+  distraction: boolean;
+  riskLevel: 'low' | 'medium' | 'high';
+  confidence: number;
+  message: string;
+  configured?: boolean;
+}
+
+export type GpsStatus = 'loading' | 'active' | 'denied' | 'unavailable';
+
 export interface SpeedData {
-  currentSpeedKmh: number;
+  currentSpeedKmh: number | null;
+  currentSpeed?: number | null;
+  isSpeedAvailable: boolean;
   speedLimitKmh: number;
   isOverSpeed: boolean;
   latitude: number | null;
   longitude: number | null;
+  accuracyMeters: number | null;
+  heading: number | null;
   locationName: string;
+  gpsStatus: GpsStatus;
+  gpsErrorMessage?: string | null;
+  speedSource: 'gps' | 'manual' | 'none';
+  lastGpsUpdate?: number;
 }
 
 export interface EmergencyContact {
@@ -114,11 +142,24 @@ export interface CircadianPoint {
   currentRiskFactor: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 }
 
+export type CabinLightHardwareStatus = 'connected' | 'off' | 'unavailable';
+
+export interface CabinLightHardwareInfo {
+  protocol: 'CAN_BUS' | 'BLE_SMART_LIGHT' | 'OBD2_BRIDGE' | 'NONE';
+  deviceName?: string;
+  connectionType?: 'Bluetooth LE' | 'Web Serial (CAN/OBD-II)' | 'WebSocket Gateway' | 'None';
+  connectedAt?: number;
+  lastCommandAck?: string;
+}
+
 export interface CabinLightConfig {
+  hardwareStatus: CabinLightHardwareStatus;
   isEnabled: boolean;
   mode: 'alertness_cyan' | 'pulse_wave' | 'emergency_strobe' | 'sunset_amber';
   intensity: number; // 0 - 100
+  colorHex: string;
   autoStrobeOnAlert: boolean;
   strobeSpeedHz: number;
+  hardwareInfo: CabinLightHardwareInfo;
 }
 

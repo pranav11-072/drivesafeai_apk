@@ -6,7 +6,6 @@ import { RestStop, DriverState, SpeedData } from '../types';
 interface RestStopNavigatorProps {
   driverState: DriverState;
   speedData: SpeedData;
-  onOpenAICoach?: () => void;
 }
 
 const DEFAULT_REST_STOPS: RestStop[] = [
@@ -71,7 +70,6 @@ const DEFAULT_REST_STOPS: RestStop[] = [
 export const RestStopNavigator: React.FC<RestStopNavigatorProps> = ({
   driverState,
   speedData,
-  onOpenAICoach,
 }) => {
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'rest_area' | 'coffee' | 'diner' | 'fuel_ev'>('all');
   const [activeStop, setActiveStop] = useState<RestStop>(DEFAULT_REST_STOPS[0]);
@@ -238,7 +236,7 @@ export const RestStopNavigator: React.FC<RestStopNavigatorProps> = ({
               </div>
             </div>
             <span className="text-[10px] font-bold text-blue-300 mt-1 bg-slate-900/80 px-1.5 py-0.5 rounded border border-blue-500/30">
-              Vehicle ({speedData.currentSpeedKmh} km/h)
+              Vehicle ({speedData.isSpeedAvailable && speedData.currentSpeedKmh !== null ? `${speedData.currentSpeedKmh} km/h` : 'Speed unavailable'})
             </span>
           </div>
 

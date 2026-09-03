@@ -7,7 +7,6 @@ interface VoiceCommandControlProps {
   onToggleMonitoring: (start?: boolean) => void;
   onToggleMute: () => void;
   isMuted: boolean;
-  onOpenAICoach: () => void;
   onTriggerSOS?: () => void;
 }
 
@@ -24,7 +23,6 @@ export const VoiceCommandControl: React.FC<VoiceCommandControlProps> = ({
   onToggleMonitoring,
   onToggleMute,
   isMuted,
-  onOpenAICoach,
   onTriggerSOS,
 }) => {
   const [isListening, setIsListening] = useState(false);
@@ -63,10 +61,6 @@ export const VoiceCommandControl: React.FC<VoiceCommandControlProps> = ({
         onToggleMute();
         soundManager.speakText("Alarms unmuted.");
       }
-    } else if (text.includes('coach') || text.includes('ai helper') || text.includes('safety coach') || text.includes('assistant')) {
-      setRecognizedCommand('Open AI Coach');
-      soundManager.speakText("Opening AI Safety Coach.");
-      onOpenAICoach();
     } else if (text.includes('sos') || text.includes('emergency') || text.includes('help me') || text.includes('dispatch')) {
       setRecognizedCommand('Trigger Emergency SOS');
       soundManager.speakText("Emergency SOS triggered by voice!");
@@ -77,7 +71,7 @@ export const VoiceCommandControl: React.FC<VoiceCommandControlProps> = ({
 
     // Auto clear badge after 4 seconds
     setTimeout(() => setRecognizedCommand(null), 4000);
-  }, [isMonitoring, isMuted, onToggleMonitoring, onToggleMute, onOpenAICoach, onTriggerSOS]);
+  }, [isMonitoring, isMuted, onToggleMonitoring, onToggleMute, onTriggerSOS]);
 
   useEffect(() => {
     const SpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;

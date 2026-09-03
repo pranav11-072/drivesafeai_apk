@@ -30,6 +30,53 @@ export function formatTime(seconds: number): string {
   return `${mins}m ${secs}s`;
 }
 
+export function formatCoordinates(
+  lat: number | null,
+  lon: number | null,
+  fallbackText: string = 'Unavailable'
+): string {
+  if (lat === null || lon === null || isNaN(lat) || isNaN(lon)) {
+    return fallbackText;
+  }
+  const latDir = lat >= 0 ? 'N' : 'S';
+  const lonDir = lon >= 0 ? 'E' : 'W';
+  return `${Math.abs(lat).toFixed(4)}° ${latDir}, ${Math.abs(lon).toFixed(4)}° ${lonDir}`;
+}
+
+export function calculateSpeedFromDisplacement(
+  prevLat: number,
+  prevLon: number,
+  prevTimestamp: number,
+  currLat: number,
+  currLon: number,
+  currTimestamp: number,
+  accuracyMeters: number = 15
+): number {
+  const timeDeltaHours = (currTimestamp - prevTimestamp) / 3600000;
+  // If time delta is unreasonable (less than 300ms or greater than 2 minutes), ignore
+  if (timeDeltaHours < 0.0001 || timeDeltaHours > 0.033) {
+    return 0;
+  }
+
+  const distKm = calculateDistanceKm(prevLat, prevLon, currLat, currLon);
+  const distMeters = distKm * 1000;
+
+  // Filter out GPS noise / drift when stationary
+  const jitterThreshold = Math.max(8, accuracyMeters * 0.8);
+  if (distMeters < jitterThreshold) {
+    return 0;
+  }
+
+  const rawSpeedKmh = Math.round(distKm / timeDeltaHours);
+  // Cap at realistic vehicle speeds (e.g. 200 km/h) to reject satellite teleport spikes
+  if (rawSpeedKmh > 200) {
+    return 0;
+  }
+
+  // Snap very small speeds to 0
+  return rawSpeedKmh < 3 ? 0 : rawSpeedKmh;
+}
+
 // Generate realistic street names for simulated driving
 const DEMO_STREETS = [
   "Highway 101, Express Corridor",

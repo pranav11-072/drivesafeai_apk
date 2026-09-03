@@ -1,36 +1,98 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Camera, Eye, AlertOctagon, Scan, RefreshCw, Zap, Sparkles, CheckCircle2, UserCheck, UserX, Video, VideoOff } from 'lucide-react';
+import {
+  Camera, Eye, AlertOctagon, Scan, RefreshCw, Zap, Sparkles,
+  CheckCircle2, UserCheck, UserX, Video, VideoOff, FlipHorizontal,
+  AlertTriangle, ShieldCheck, ShieldAlert
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { DriverState } from '../types';
+import { DriverState, AlertLevel, GeminiFrameAnalysisResult } from '../types';
 import { soundManager } from '../utils/audio';
-import type { FaceWorkerOutput, FaceWorkerInput } from '../workers/faceWorker';
+import type { FaceWorkerOutput, FaceWorkerInput, PotentialSafetyEventType } from '../workers/faceWorker';
 
 interface CameraHUDProps {
   driverState: DriverState;
   setDriverState: React.Dispatch<React.SetStateAction<DriverState>>;
   isMonitoring: boolean;
+  isMobileMode?: boolean;
+}
+
+interface SafetyEventRecord {
+  trigger: string;
+  timestamp: string;
+  verdict: string;
+  alertLevel: 'GREEN' | 'YELLOW' | 'RED';
+  confidence: number;
+  thumbnail?: string;
+  action: string;
 }
 
 export const CameraHUD: React.FC<CameraHUDProps> = ({
   driverState,
   setDriverState,
   isMonitoring,
+  isMobileMode = false,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+
   const [cameraPermission, setCameraPermission] = useState<boolean | null>(null);
-  const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
-  const [autoAiScan, setAutoAiScan] = useState(true);
-  const [faceDetected, setFaceDetected] = useState<boolean>(false);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [isSimulatorMode, setIsSimulatorMode] = useState<boolean>(false);
+  const [faceDetected, setFaceDetected] = useState<boolean>(true);
+  const [isMirrored, setIsMirrored] = useState<boolean>(true);
+
+  // Gemini Event-Driven Analysis States
+  const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
+  const [activeEventTrigger, setActiveEventTrigger] = useState<string | null>(null);
+  const [lastVerifiedEvent, setLastVerifiedEvent] = useState<SafetyEventRecord | null>(null);
+  const [isAiConfigured, setIsAiConfigured] = useState<boolean | null>(null);
+  const [latestAiAnalysis, setLatestAiAnalysis] = useState<GeminiFrameAnalysisResult | null>(null);
+
+  // Check Gemini AI configuration status on mount
+  useEffect(() => {
+    fetch('/api/ai/config-status')
+      .then(r => r.json())
+      .then(data => {
+        setIsAiConfigured(data.configured);
+        if (!data.configured) {
+          setDriverState(prev => ({
+            ...prev,
+            aiConfigured: false,
+            lastAiMessage: "AI Analysis: Not configured",
+          }));
+        } else {
+          setDriverState(prev => ({
+            ...prev,
+            aiConfigured: true,
+          }));
+        }
+      })
+      .catch(() => {
+        setIsAiConfigured(false);
+        setDriverState(prev => ({
+          ...prev,
+          aiConfigured: false,
+          lastAiMessage: "AI Analysis: Not configured",
+        }));
+      });
+  }, [setDriverState]);
+
+  // Available video input devices
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>('');
 
   // Worker references
   const workerRef = useRef<Worker | null>(null);
   const isWorkerBusyRef = useRef<boolean>(false);
   const latestWorkerResultRef = useRef<FaceWorkerOutput | null>(null);
 
-  // EMA smoothing reference for continuous 30/60 FPS HUD overlay
+  // Anti-spam debounce for auto-dispatching Gemini analysis
+  const lastDispatchedEventTimeRef = useRef<number>(0);
+  const activeStreamRef = useRef<MediaStream | null>(null);
+  const lastStateUpdateRef = useRef<number>(0);
+  const lastWorkerSendTimeRef = useRef<number>(0);
+
+  // EMA smoothing reference for 60 FPS HUD overlay
   const smoothRef = useRef({
     x: 160,
     y: 120,
@@ -41,15 +103,24 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     pitch: 0,
     yaw: 0,
     roll: 0,
-    faceFound: false,
-    confidence: 0,
+    faceFound: true,
+    confidence: 0.95,
   });
 
-  const lastStateUpdateRef = useRef<number>(0);
-  const lastWorkerSendTimeRef = useRef<number>(0);
-  const activeStreamRef = useRef<MediaStream | null>(null);
+  // Enumerate cameras on mount
+  useEffect(() => {
+    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
+      navigator.mediaDevices.enumerateDevices().then(devices => {
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        setAvailableCameras(videoDevices);
+        if (videoDevices.length > 0 && !selectedCameraId) {
+          setSelectedCameraId(videoDevices[0].deviceId);
+        }
+      }).catch(err => console.warn("Device enumeration error:", err));
+    }
+  }, [selectedCameraId]);
 
-  // Function to initialize webcam with fallback constraints
+  // Function to initialize webcam with user-facing constraints and robust fallbacks
   const startCameraStream = useCallback(async () => {
     try {
       setStreamError(null);
@@ -62,19 +133,26 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
       let stream: MediaStream | null = null;
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        const videoConstraints: MediaTrackConstraints = selectedCameraId
+          ? { deviceId: { exact: selectedCameraId } }
+          : { facingMode: 'user' };
+
         try {
           stream = await navigator.mediaDevices.getUserMedia({
             video: {
+              ...videoConstraints,
               width: { ideal: 640 },
               height: { ideal: 480 },
-              facingMode: 'user',
+              frameRate: { ideal: 30 },
             },
             audio: false,
           });
-        } catch (firstErr) {
-          console.warn("Retrying with relaxed camera constraints:", firstErr);
-          // Fallback to basic video constraint if ideal fails
-          stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        } catch (idealErr) {
+          console.warn("Retrying with relaxed camera constraints:", idealErr);
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
         }
       }
 
@@ -83,10 +161,9 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           videoRef.current.onloadedmetadata = () => {
-            videoRef.current?.play().catch(e => console.warn("Video play error:", e));
+            videoRef.current?.play().catch(e => console.warn("Video play catch:", e));
           };
-          // Explicit play call for strict autoplay environments
-          videoRef.current.play().catch(e => console.warn("Initial play catch:", e));
+          videoRef.current.play().catch(e => console.warn("Direct play catch:", e));
         }
         setCameraPermission(true);
         setIsSimulatorMode(false);
@@ -99,11 +176,11 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
       setIsSimulatorMode(true);
       setStreamError(
         err?.name === 'NotAllowedError'
-          ? "Camera permission was denied. Virtual Driver Simulator is active."
-          : "Webcam not available. Virtual Driver Simulator is active."
+          ? "Camera permission denied. Virtual Driver Simulator is active."
+          : "Webcam not accessible. Virtual Driver Simulator is active."
       );
     }
-  }, []);
+  }, [selectedCameraId]);
 
   // Manage camera lifecycle based on isMonitoring state
   useEffect(() => {
@@ -117,9 +194,9 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
       if (videoRef.current) {
         videoRef.current.srcObject = null;
       }
-      setFaceDetected(false);
       setCameraPermission(null);
       setStreamError(null);
+      setActiveEventTrigger(null);
     }
 
     return () => {
@@ -130,33 +207,192 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     };
   }, [isMonitoring, startCameraStream]);
 
-  // Real-time Computer Vision via Web Worker & 30 FPS Main-Thread Smooth Tracking
+  // Helper: Capture current frame as base64 JPEG
+  const captureCurrentFrame = useCallback((): string => {
+    const video = videoRef.current;
+    if (video && video.readyState >= 2 && video.videoWidth > 0 && !isSimulatorMode) {
+      const snapCanvas = document.createElement('canvas');
+      snapCanvas.width = 360;
+      snapCanvas.height = 270;
+      const sctx = snapCanvas.getContext('2d');
+      if (sctx) {
+        sctx.drawImage(video, 0, 0, snapCanvas.width, snapCanvas.height);
+        return snapCanvas.toDataURL('image/jpeg', 0.82);
+      }
+    }
+
+    // Fallback: capture HUD overlay canvas or render simulated frame
+    if (overlayCanvasRef.current) {
+      return overlayCanvasRef.current.toDataURL('image/jpeg', 0.82);
+    }
+
+    // Default driver frame placeholder
+    const placeholderCanvas = document.createElement('canvas');
+    placeholderCanvas.width = 320;
+    placeholderCanvas.height = 240;
+    const pctx = placeholderCanvas.getContext('2d');
+    if (pctx) {
+      pctx.fillStyle = '#090d16';
+      pctx.fillRect(0, 0, 320, 240);
+      pctx.fillStyle = '#38bdf8';
+      pctx.font = 'bold 14px monospace';
+      pctx.fillText('Driver Safety Snapshot', 70, 120);
+      return placeholderCanvas.toDataURL('image/jpeg', 0.82);
+    }
+    return '';
+  }, [isSimulatorMode]);
+
+  // Central Event-Driven Pipeline:
+  // Triggered when local real-time detection flags a potential safety event
+  // Captures current frame -> Sends only to Gemini -> Updates driver status & safety score -> Triggers alert
+  const dispatchSafetyEventToGemini = useCallback(async (
+    triggerEvent: PotentialSafetyEventType | 'MANUAL_VERIFY',
+    localTelemetry?: any
+  ) => {
+    // Cooldown check (prevent overlapping requests within 6 seconds unless manual)
+    const now = Date.now();
+    if (triggerEvent !== 'MANUAL_VERIFY' && now - lastDispatchedEventTimeRef.current < 6000) {
+      return;
+    }
+    lastDispatchedEventTimeRef.current = now;
+
+    setIsAiAnalyzing(true);
+    setActiveEventTrigger(triggerEvent);
+
+    const frameBase64 = captureCurrentFrame();
+
+    try {
+      const res = await fetch('/api/ai/analyze-driver', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: frameBase64,
+          triggerEvent,
+          localMetrics: localTelemetry || {
+            ear: driverState.ear,
+            mar: driverState.mar,
+            yaw: driverState.headTilt,
+            driverPresent: driverState.driverPresent,
+          },
+        }),
+      });
+
+      const data = await res.json();
+      if (res.ok) {
+        const configured = data.configured !== undefined ? data.configured : true;
+        setIsAiConfigured(configured);
+
+        // Parse structured Gemini AI result according to user specifications
+        const structuredAnalysis: GeminiFrameAnalysisResult = {
+          driverDetected: typeof data.driverDetected === 'boolean' ? data.driverDetected : true,
+          attention: data.attention || (data.distracted ? 'distracted' : 'focused'),
+          drowsiness: data.drowsiness || (data.fatigueScore > 65 ? 'high' : data.fatigueScore > 35 ? 'medium' : 'low'),
+          eyes: data.eyes || (data.eyesClosed ? 'closed' : 'open'),
+          yawning: Boolean(data.yawning),
+          distraction: Boolean(data.distraction ?? data.distracted),
+          riskLevel: data.riskLevel || (data.alertLevel === 'RED' ? 'high' : data.alertLevel === 'YELLOW' ? 'medium' : 'low'),
+          confidence: typeof data.confidence === 'number' ? data.confidence : 0.92,
+          message: data.message || (!configured ? "AI Analysis: Not configured" : "Driver appears attentive"),
+          configured,
+        };
+        setLatestAiAnalysis(structuredAnalysis);
+
+        // Compute updated safety score based on Gemini risk level and penalty
+        const scorePenalty = data.safetyScorePenalty ?? (structuredAnalysis.riskLevel === 'high' ? 25 : structuredAnalysis.riskLevel === 'medium' ? 10 : 0);
+        const newSafetyScore = Math.max(15, Math.min(100, (driverState.safetyScore || 100) - scorePenalty));
+
+        const isRed = structuredAnalysis.riskLevel === 'high' || data.alertLevel === 'RED' || !structuredAnalysis.driverDetected;
+        const isYellow = structuredAnalysis.riskLevel === 'medium' || data.alertLevel === 'YELLOW';
+        const alertLevel: AlertLevel = isRed ? 'RED' : isYellow ? 'YELLOW' : 'GREEN';
+
+        // Update driver state
+        setDriverState(prev => ({
+          ...prev,
+          driverPresent: structuredAnalysis.driverDetected,
+          drowsinessLevel: structuredAnalysis.drowsiness === 'high' ? 88 : structuredAnalysis.drowsiness === 'medium' ? 55 : 15,
+          safetyScore: newSafetyScore,
+          eyesClosed: structuredAnalysis.eyes === 'closed',
+          isYawning: structuredAnalysis.yawning,
+          isDistracted: structuredAnalysis.distraction || structuredAnalysis.attention === 'distracted',
+          abnormalBehavior: structuredAnalysis.attention === 'inattentive' || prev.abnormalBehavior,
+          alertLevel,
+          aiConfigured: configured,
+          lastAiMessage: structuredAnalysis.message,
+          lastEventTrigger: triggerEvent,
+          microSleepCount: (structuredAnalysis.eyes === 'closed' || triggerEvent === 'PROLONGED_EYE_CLOSURE') ? prev.microSleepCount + 1 : prev.microSleepCount,
+          yawnCount: (structuredAnalysis.yawning || triggerEvent === 'YAWNING') ? prev.yawnCount + 1 : prev.yawnCount,
+          distractionCount: (structuredAnalysis.distraction || triggerEvent === 'DISTRACTION') ? prev.distractionCount + 1 : prev.distractionCount,
+        }));
+
+        // Trigger appropriate audio alert
+        if (alertLevel === 'RED' || triggerEvent === 'PROLONGED_EYE_CLOSURE') {
+          soundManager.playCriticalAlarm(true);
+          soundManager.speakText("Warning! Severe safety alert detected.");
+        } else if (alertLevel === 'YELLOW' || triggerEvent === 'YAWNING' || triggerEvent === 'DISTRACTION') {
+          soundManager.playWarningBeep(true);
+          soundManager.speakText("Attention: please keep eyes focused on the road.");
+        } else if (!structuredAnalysis.driverDetected || triggerEvent === 'DRIVER_ABSENT') {
+          soundManager.playWarningBeep(true);
+          soundManager.speakText("Warning: driver face not detected in camera view.");
+        }
+
+        // Record incident verification
+        setLastVerifiedEvent({
+          trigger: triggerEvent,
+          timestamp: new Date().toLocaleTimeString(),
+          verdict: structuredAnalysis.message,
+          alertLevel,
+          confidence: Math.round(structuredAnalysis.confidence * 100),
+          thumbnail: frameBase64,
+          action: alertLevel === 'RED' ? "Pull over immediately to a safe rest stop" : alertLevel === 'YELLOW' ? "Take a rest break and refocus" : "Driver clear and attentive",
+        });
+      }
+    } catch (err) {
+      console.warn("Gemini event analysis error:", err);
+    } finally {
+      setIsAiAnalyzing(false);
+      setTimeout(() => setActiveEventTrigger(null), 3500);
+    }
+  }, [captureCurrentFrame, driverState.ear, driverState.mar, driverState.headTilt, driverState.driverPresent, driverState.safetyScore, setDriverState]);
+
+  // Real-time Computer Vision via Web Worker & 60 FPS Main-Thread Canvas Overlay
   useEffect(() => {
     if (!isMonitoring) return;
 
-    // Instantiate custom MediaPipe Face Worker off main thread
+    // Instantiate custom Face Worker off main thread
     const worker = new Worker(new URL('../workers/faceWorker.ts', import.meta.url), { type: 'module' });
     workerRef.current = worker;
 
     worker.onmessage = (e: MessageEvent<FaceWorkerOutput>) => {
       isWorkerBusyRef.current = false;
-      if (e.data && e.data.type === 'FACE_ANALYSIS_RESULT') {
-        latestWorkerResultRef.current = e.data;
-        setFaceDetected(e.data.hasFace);
+      const data = e.data;
+      if (data && data.type === 'FACE_ANALYSIS_RESULT') {
+        latestWorkerResultRef.current = data;
+        setFaceDetected(data.driverPresent);
+
+        // EVENT-DRIVEN ARCHITECTURE:
+        // When local real-time detection flags a potential safety event,
+        // automatically capture the current frame and send ONLY this event to Gemini!
+        if (data.potentialSafetyEvent) {
+          dispatchSafetyEventToGemini(data.potentialSafetyEvent, {
+            ear: data.metrics.ear,
+            mar: data.metrics.mar,
+            yaw: data.metrics.yaw,
+            pitch: data.metrics.pitch,
+            driverPresent: data.driverPresent,
+            confidence: data.confidence,
+          });
+        }
       }
     };
 
-    // Off-screen canvas for worker frame pixel extractions (120x90)
+    // Low-resolution off-screen canvas for frame extraction (120x90)
     const analysisCanvas = document.createElement('canvas');
     analysisCanvas.width = 120;
     analysisCanvas.height = 90;
     const actx = analysisCanvas.getContext('2d', { willReadFrequently: true });
 
     let animationFrameId: number;
-    let closedEyeFrames = 0;
-    let openMouthFrames = 0;
-    let distractedFrames = 0;
-
     let simTick = 0;
 
     const processVideoFrame = () => {
@@ -164,7 +400,6 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
       const overlay = overlayCanvasRef.current;
 
       if (overlay) {
-        // Synchronize overlay canvas with display viewport dimensions
         const displayW = overlay.clientWidth || 320;
         const displayH = overlay.clientHeight || 240;
         if (overlay.width !== displayW || overlay.height !== displayH) {
@@ -175,12 +410,11 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         const octx = overlay.getContext('2d');
         const now = Date.now();
 
-        // 1. Check if Live Video is available and ready
+        // 1. Process Live Video with Worker (10-12 FPS)
         const isVideoReady = video && video.readyState >= 2 && video.videoWidth > 0;
 
-        if (isVideoReady && actx) {
-          // Offload full analysis to Worker at 8-10 FPS (~110ms)
-          const shouldSendToWorker = !isWorkerBusyRef.current && (now - lastWorkerSendTimeRef.current >= 100);
+        if (isVideoReady && actx && !isSimulatorMode) {
+          const shouldSendToWorker = !isWorkerBusyRef.current && (now - lastWorkerSendTimeRef.current >= 90);
 
           if (shouldSendToWorker) {
             lastWorkerSendTimeRef.current = now;
@@ -196,28 +430,30 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
               height: 90,
               timestamp: now,
             };
-
             worker.postMessage(inputMsg);
           }
         } else if (isSimulatorMode || !cameraPermission) {
-          // Virtual Simulator Frame Generation
-          simTick += 0.04;
-          const simHeadX = 0.5 + Math.sin(simTick * 0.5) * 0.05;
-          const simHeadY = 0.45 + Math.cos(simTick * 0.3) * 0.03;
+          // Virtual Driver Simulator Animation Frame
+          simTick += 0.035;
+          const simHeadX = 0.5 + Math.sin(simTick * 0.4) * 0.04;
+          const simHeadY = 0.45 + Math.cos(simTick * 0.25) * 0.02;
           const isSimClosed = driverState.eyesClosed;
           const isSimYawning = driverState.isYawning;
           const isSimDistracted = driverState.isDistracted;
+          const isSimAbsent = !driverState.driverPresent;
+          const isSimAbnormal = driverState.abnormalBehavior;
 
           latestWorkerResultRef.current = {
             type: 'FACE_ANALYSIS_RESULT',
             timestamp: now,
-            hasFace: true,
-            confidence: 0.94,
+            hasFace: !isSimAbsent,
+            driverPresent: !isSimAbsent,
+            confidence: isSimAbsent ? 0 : 0.96,
             box: {
               x: simHeadX,
               y: simHeadY,
               width: 0.42,
-              height: 0.56,
+              height: 0.55,
             },
             landmarks: {
               leftEye: [],
@@ -234,32 +470,46 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             metrics: {
               ear: isSimClosed ? 0.11 : 0.33,
               mar: isSimYawning ? 0.68 : 0.14,
-              yaw: isSimDistracted ? 35 : Math.round(Math.sin(simTick * 0.5) * 8),
-              pitch: Math.round(Math.cos(simTick * 0.3) * 6),
+              yaw: isSimDistracted ? 32 : Math.round(Math.sin(simTick * 0.4) * 6),
+              pitch: isSimAbnormal ? 28 : Math.round(Math.cos(simTick * 0.25) * 5),
               roll: 0,
               isEyelidClosed: isSimClosed,
               isMouthYawning: isSimYawning,
               isHeadTurned: isSimDistracted,
               isDistracted: isSimDistracted,
+              abnormalBehavior: isSimAbnormal,
+              consecutiveClosedFrames: isSimClosed ? 10 : 0,
+              consecutiveYawnFrames: isSimYawning ? 10 : 0,
+              consecutiveDistractedFrames: isSimDistracted ? 12 : 0,
             },
+            potentialSafetyEvent: isSimAbsent
+              ? 'DRIVER_ABSENT'
+              : isSimClosed
+              ? 'PROLONGED_EYE_CLOSURE'
+              : isSimAbnormal
+              ? 'ABNORMAL_BEHAVIOR'
+              : isSimYawning
+              ? 'YAWNING'
+              : isSimDistracted
+              ? 'DISTRACTION'
+              : null,
           };
-          setFaceDetected(true);
+          setFaceDetected(!isSimAbsent);
         }
 
-        // 2. MAIN THREAD LOW-COST LANDMARK TRACKING & EMA SMOOTHING (30 FPS)
+        // 2. Main-Thread Smooth Tracking & State Synchronization
         const workerRes = latestWorkerResultRef.current;
         const sm = smoothRef.current;
 
         if (workerRes && workerRes.hasFace) {
           const { box, metrics } = workerRes;
 
-          // Map normalized coordinates to canvas viewport (horizontally mirrored for driver mirror effect)
-          const targetX = (1 - box.x) * overlay.width;
+          const targetX = (isMirrored ? 1 - box.x : box.x) * overlay.width;
           const targetY = box.y * overlay.height;
           const targetW = box.width * overlay.width;
           const targetH = box.height * overlay.height;
 
-          // Exponential Moving Average (EMA) smoothing for zero-lag tracking
+          // Exponential Moving Average (EMA) smoothing for jitter-free HUD tracking
           sm.x += (targetX - sm.x) * 0.35;
           sm.y += (targetY - sm.y) * 0.35;
           sm.w += (targetW - sm.w) * 0.35;
@@ -270,186 +520,164 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           sm.pitch += (metrics.pitch - sm.pitch) * 0.25;
           sm.faceFound = true;
 
-          if (metrics.isEyelidClosed) closedEyeFrames++;
-          else closedEyeFrames = Math.max(0, closedEyeFrames - 1);
-
-          if (metrics.isMouthYawning) openMouthFrames++;
-          else openMouthFrames = Math.max(0, openMouthFrames - 1);
-
-          if (metrics.isHeadTurned) distractedFrames++;
-          else distractedFrames = Math.max(0, distractedFrames - 1);
-
-          const isEyesClosedState = closedEyeFrames > 4;
-          const isYawnState = openMouthFrames > 5;
-          const isDistractedState = distractedFrames > 5;
-
-          // Throttled React state & sound updates (every 300ms)
-          if (now - lastStateUpdateRef.current > 300) {
+          // Regular state update (every 250ms)
+          if (now - lastStateUpdateRef.current > 250) {
             lastStateUpdateRef.current = now;
 
-            setDriverState(prev => {
-              let dLevel = prev.drowsinessLevel;
-              if (isEyesClosedState) {
-                dLevel = Math.min(100, dLevel + 3);
-              } else if (isYawnState) {
-                dLevel = Math.min(100, dLevel + 1.5);
-              } else {
-                dLevel = Math.max(0, dLevel - 0.6);
-              }
-
-              let alert: 'GREEN' | 'YELLOW' | 'RED' = 'GREEN';
-              if (dLevel >= 60 || isEyesClosedState) {
-                alert = 'RED';
-                soundManager.playCriticalAlarm();
-              } else if (dLevel >= 30 || isYawnState || isDistractedState) {
-                alert = 'YELLOW';
-                soundManager.playWarningBeep();
-              }
-
-              return {
-                ...prev,
-                ear: Number(sm.ear.toFixed(2)),
-                mar: Number(sm.mar.toFixed(2)),
-                headTilt: Math.round(sm.yaw),
-                eyesClosed: isEyesClosedState,
-                isYawning: isYawnState,
-                isDistracted: isDistractedState,
-                drowsinessLevel: Math.round(dLevel),
-                alertLevel: alert,
-                microSleepCount: isEyesClosedState && !prev.eyesClosed ? prev.microSleepCount + 1 : prev.microSleepCount,
-                yawnCount: isYawnState && !prev.isYawning ? prev.yawnCount + 1 : prev.yawnCount,
-                distractionCount: isDistractedState && !prev.isDistracted ? prev.distractionCount + 1 : prev.distractionCount,
-              };
-            });
+            setDriverState(prev => ({
+              ...prev,
+              driverPresent: true,
+              ear: Number(sm.ear.toFixed(2)),
+              mar: Number(sm.mar.toFixed(2)),
+              headTilt: Math.round(sm.yaw),
+              eyesClosed: metrics.isEyelidClosed,
+              isYawning: metrics.isMouthYawning,
+              isDistracted: metrics.isDistracted,
+              abnormalBehavior: metrics.abnormalBehavior,
+            }));
           }
         } else {
           sm.faceFound = false;
+          if (now - lastStateUpdateRef.current > 400) {
+            lastStateUpdateRef.current = now;
+            setDriverState(prev => ({
+              ...prev,
+              driverPresent: false,
+              headTilt: 0,
+            }));
+          }
         }
 
-        // 3. RENDER MEDIAPIPE FACE MESH & HUD OVERLAY (30 FPS)
+        // 3. Render HUD Overlay & Wireframe
         if (octx) {
           octx.clearRect(0, 0, overlay.width, overlay.height);
 
-          // If simulator mode, render background driver silhouette canvas
+          // Simulated background cockpit silhouette if camera is off
           if (isSimulatorMode || !cameraPermission) {
-            octx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+            octx.fillStyle = '#080d1a';
             octx.fillRect(0, 0, overlay.width, overlay.height);
 
-            // Subtle simulated vehicle cockpit background
+            // Horizon & steering wheel guide
             octx.strokeStyle = 'rgba(56, 189, 248, 0.12)';
-            octx.lineWidth = 1;
+            octx.lineWidth = 1.5;
             octx.beginPath();
-            octx.arc(overlay.width / 2, overlay.height + 40, overlay.height * 0.7, Math.PI, 0);
+            octx.arc(overlay.width / 2, overlay.height + 30, overlay.height * 0.75, Math.PI, 0);
             octx.stroke();
           }
 
           if (sm.faceFound) {
             const boxX = sm.x - sm.w / 2;
             const boxY = sm.y - sm.h / 2;
-            const mainColor = driverState.alertLevel === 'RED' ? '#ef4444' : driverState.alertLevel === 'YELLOW' ? '#f59e0b' : '#38bdf8';
+            const mainColor = driverState.alertLevel === 'RED'
+              ? '#ef4444'
+              : driverState.alertLevel === 'YELLOW'
+              ? '#f59e0b'
+              : '#38bdf8';
 
             // Outer Bounding Box
             octx.strokeStyle = mainColor;
-            octx.lineWidth = 1.8;
-            octx.setLineDash([5, 5]);
+            octx.lineWidth = 1.6;
+            octx.setLineDash([6, 6]);
             octx.strokeRect(boxX, boxY, sm.w, sm.h);
             octx.setLineDash([]);
 
-            // Corner Reticles
+            // Reticle Corners
             const cLen = 14;
-            octx.lineWidth = 3;
+            octx.lineWidth = 2.5;
             octx.beginPath(); octx.moveTo(boxX, boxY + cLen); octx.lineTo(boxX, boxY); octx.lineTo(boxX + cLen, boxY); octx.stroke();
             octx.beginPath(); octx.moveTo(boxX + sm.w - cLen, boxY); octx.lineTo(boxX + sm.w, boxY); octx.lineTo(boxX + sm.w, boxY + cLen); octx.stroke();
             octx.beginPath(); octx.moveTo(boxX, boxY + sm.h - cLen); octx.lineTo(boxX, boxY + sm.h); octx.lineTo(boxX + cLen, boxY + sm.h); octx.stroke();
             octx.beginPath(); octx.moveTo(boxX + sm.w - cLen, boxY + sm.h); octx.lineTo(boxX + sm.w, boxY + sm.h); octx.lineTo(boxX + sm.w, boxY + sm.h - cLen); octx.stroke();
 
-            // 468-POINT MEDIAPIPE FULL FACE MESH WIREFRAME
+            // Geometric Landmark Wireframe
             const foreheadY = sm.y - sm.h * 0.38;
-            const browY = sm.y - sm.h * 0.25;
+            const browY = sm.y - sm.h * 0.24;
             const leftEyeX = sm.x - sm.w * 0.22;
             const rightEyeX = sm.x + sm.w * 0.22;
             const eyeY = sm.y - sm.h * 0.14;
             const noseBridgeY = sm.y - sm.h * 0.02;
             const noseTipY = sm.y + sm.h * 0.08;
-            const leftCheekX = sm.x - sm.w * 0.36;
-            const rightCheekX = sm.x + sm.w * 0.36;
+            const leftCheekX = sm.x - sm.w * 0.34;
+            const rightCheekX = sm.x + sm.w * 0.34;
             const cheekY = sm.y + sm.h * 0.12;
             const mouthY = sm.y + sm.h * 0.28;
             const chinY = sm.y + sm.h * 0.44;
 
-            // Wireframe Mesh Lines
-            octx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+            octx.strokeStyle = 'rgba(56, 189, 248, 0.32)';
             octx.lineWidth = 1;
 
-            // Forehead & Brow Mesh
+            // Forehead & Brow lines
             octx.beginPath();
-            octx.moveTo(sm.x - sm.w * 0.3, foreheadY);
-            octx.lineTo(sm.x + sm.w * 0.3, foreheadY);
+            octx.moveTo(sm.x - sm.w * 0.28, foreheadY);
+            octx.lineTo(sm.x + sm.w * 0.28, foreheadY);
             octx.lineTo(rightEyeX, browY);
             octx.lineTo(leftEyeX, browY);
             octx.closePath();
             octx.stroke();
 
-            // Eye-Nose Mesh
+            // Eye to Nose Triangle
             octx.beginPath();
-            octx.moveTo(leftEyeX, eyeY); octx.lineTo(rightEyeX, eyeY);
-            octx.lineTo(sm.x, noseTipY); octx.lineTo(leftEyeX, eyeY);
+            octx.moveTo(leftEyeX, eyeY);
+            octx.lineTo(rightEyeX, eyeY);
+            octx.lineTo(sm.x, noseTipY);
+            octx.closePath();
             octx.stroke();
 
-            // Jaw & Cheek Contour
+            // Jaw Contour
             octx.beginPath();
             octx.moveTo(leftCheekX, cheekY);
             octx.lineTo(leftEyeX, eyeY);
             octx.lineTo(sm.x, noseBridgeY);
             octx.lineTo(rightEyeX, eyeY);
             octx.lineTo(rightCheekX, cheekY);
-            octx.lineTo(sm.x + sm.w * 0.2, mouthY);
+            octx.lineTo(sm.x + sm.w * 0.18, mouthY);
             octx.lineTo(sm.x, chinY);
-            octx.lineTo(sm.x - sm.w * 0.2, mouthY);
+            octx.lineTo(sm.x - sm.w * 0.18, mouthY);
             octx.closePath();
             octx.stroke();
 
-            // Eye Landmark Nodes & Reticles
-            octx.fillStyle = driverState.eyesClosed ? '#ef4444' : '#38bdf8';
-            octx.beginPath(); octx.arc(leftEyeX, eyeY, 5, 0, Math.PI * 2); octx.fill();
-            octx.beginPath(); octx.arc(rightEyeX, eyeY, 5, 0, Math.PI * 2); octx.fill();
+            // Eye Points (red if closed)
+            const eyeColor = driverState.eyesClosed ? '#ef4444' : '#38bdf8';
+            octx.fillStyle = eyeColor;
+            octx.beginPath(); octx.arc(leftEyeX, eyeY, 4, 0, Math.PI * 2); octx.fill();
+            octx.beginPath(); octx.arc(rightEyeX, eyeY, 4, 0, Math.PI * 2); octx.fill();
 
-            octx.strokeStyle = driverState.eyesClosed ? '#ef4444' : 'rgba(255,255,255,0.85)';
-            octx.lineWidth = 1.5;
-            octx.beginPath(); octx.arc(leftEyeX, eyeY, 10, 0, Math.PI * 2); octx.stroke();
-            octx.beginPath(); octx.arc(rightEyeX, eyeY, 10, 0, Math.PI * 2); octx.stroke();
-
-            // Nose Node
-            octx.fillStyle = '#60a5fa';
-            octx.beginPath(); octx.arc(sm.x, noseTipY, 4, 0, Math.PI * 2); octx.fill();
-
-            // Mouth Node
-            octx.strokeStyle = driverState.isYawning ? '#f59e0b' : '#34d399';
+            // Mouth Aperture
+            octx.strokeStyle = driverState.isYawning ? '#f59e0b' : '#10b981';
             octx.lineWidth = 2;
             octx.beginPath();
-            octx.ellipse(sm.x, mouthY, sm.w * 0.18, driverState.isYawning ? 12 : 5, 0, 0, Math.PI * 2);
+            octx.ellipse(sm.x, mouthY, sm.w * 0.18, driverState.isYawning ? 12 : 4, 0, 0, Math.PI * 2);
             octx.stroke();
 
-            // Chin Node
-            octx.fillStyle = 'rgba(56, 189, 248, 0.6)';
-            octx.beginPath(); octx.arc(sm.x, chinY, 3, 0, Math.PI * 2); octx.fill();
-
-            // Canvas Live Telemetry Pill
-            octx.fillStyle = 'rgba(15, 23, 42, 0.88)';
-            octx.fillRect(boxX, boxY - 28, 205, 24);
+            // Telemetry Tag on top of bounding box
+            octx.fillStyle = 'rgba(9, 13, 22, 0.88)';
+            octx.fillRect(boxX, boxY - 26, 210, 22);
             octx.fillStyle = mainColor;
             octx.font = 'bold 10px monospace';
-            octx.fillText(
-              driverState.eyesClosed
-                ? '● EYES CLOSED (FATIGUE)'
-                : driverState.isYawning
-                ? '● YAWN DETECTED'
-                : isSimulatorMode
-                ? '● VIRTUAL SIMULATOR (30 FPS)'
-                : '● WORKER MESH (10 FPS / 30 FPS HUD)',
-              boxX + 6,
-              boxY - 12
-            );
+
+            const statusLabel = driverState.eyesClosed
+              ? '● PROLONGED EYE CLOSURE'
+              : driverState.isYawning
+              ? '● YAWN DETECTED'
+              : driverState.isDistracted
+              ? '● DISTRACTION (HEAD TURN)'
+              : driverState.abnormalBehavior
+              ? '● ABNORMAL POSTURE / SLUMP'
+              : '● DRIVER ALERT & TRACKED';
+
+            octx.fillText(statusLabel, boxX + 6, boxY - 11);
+          } else {
+            // Driver Not Detected Alert in HUD
+            octx.fillStyle = 'rgba(239, 68, 68, 0.15)';
+            octx.fillRect(0, 0, overlay.width, overlay.height);
+            octx.fillStyle = '#f87171';
+            octx.font = 'bold 14px sans-serif';
+            octx.textAlign = 'center';
+            octx.fillText('DRIVER NOT DETECTED IN VIEW', overlay.width / 2, overlay.height / 2);
+            octx.font = '11px sans-serif';
+            octx.fillStyle = '#fca5a5';
+            octx.fillText('Please position face towards camera', overlay.width / 2, overlay.height / 2 + 20);
+            octx.textAlign = 'start';
           }
         }
       }
@@ -460,138 +688,93 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     animationFrameId = requestAnimationFrame(processVideoFrame);
 
     return () => {
-      if (animationFrameId) {
-        cancelAnimationFrame(animationFrameId);
-      }
+      if (animationFrameId) cancelAnimationFrame(animationFrameId);
       if (workerRef.current) {
         workerRef.current.terminate();
         workerRef.current = null;
       }
     };
-  }, [isMonitoring, setDriverState, driverState.alertLevel, driverState.eyesClosed, driverState.isYawning, driverState.isDistracted, isSimulatorMode, cameraPermission]);
+  }, [isMonitoring, isSimulatorMode, cameraPermission, isMirrored, driverState.eyesClosed, driverState.isYawning, driverState.isDistracted, driverState.abnormalBehavior, driverState.driverPresent, driverState.alertLevel, setDriverState, dispatchSafetyEventToGemini]);
 
-  // Trigger Gemini Vision Driver Frame Analysis
-  const handleAnalyzeFrame = useCallback(async () => {
-    setIsAiAnalyzing(true);
-    try {
-      let imageBase64 = '';
-
-      if (videoRef.current && cameraPermission && !isSimulatorMode) {
-        const canvas = document.createElement('canvas');
-        canvas.width = 320;
-        canvas.height = 240;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-          imageBase64 = canvas.toDataURL('image/jpeg', 0.8);
-        }
-      }
-
-      // If in simulator mode or camera snapshot not available, render current HUD view
-      if (!imageBase64 && overlayCanvasRef.current) {
-        imageBase64 = overlayCanvasRef.current.toDataURL('image/jpeg', 0.8);
-      }
-
-      if (!imageBase64) {
-        const canvas = document.createElement('canvas');
-        canvas.width = 320;
-        canvas.height = 240;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.fillStyle = '#0f172a';
-          ctx.fillRect(0, 0, 320, 240);
-          ctx.fillStyle = '#38bdf8';
-          ctx.font = '16px sans-serif';
-          ctx.fillText('Driver Frame Analysis', 80, 120);
-          imageBase64 = canvas.toDataURL('image/jpeg', 0.8);
-        }
-      }
-
-      const res = await fetch('/api/ai/analyze-driver', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageBase64 }),
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setDriverState(prev => ({
-          ...prev,
-          drowsinessLevel: data.fatigueScore ?? prev.drowsinessLevel,
-          eyesClosed: data.eyesClosed ?? prev.eyesClosed,
-          isYawning: data.yawning ?? prev.isYawning,
-          isDistracted: data.distracted ?? prev.isDistracted,
-          isUsingPhone: data.usingPhone ?? prev.isUsingPhone,
-          alertLevel: data.alertLevel || prev.alertLevel,
-          lastAiMessage: data.message || "Gemini AI: Driver face analyzed.",
-        }));
-
-        if (data.alertLevel === 'RED' || data.fatigueScore > 60) {
-          soundManager.playCriticalAlarm(true);
-          soundManager.speakText("Warning! Severe driver fatigue detected!");
-        } else if (data.alertLevel === 'YELLOW') {
-          soundManager.playWarningBeep(true);
-        }
-      }
-    } catch (err) {
-      console.warn("AI Frame analysis error:", err);
-    } finally {
-      setIsAiAnalyzing(false);
-    }
-  }, [cameraPermission, isSimulatorMode, setDriverState]);
-
-  // Automated Periodic Gemini AI Scanning Loop (Every 8 Seconds)
-  useEffect(() => {
-    if (!isMonitoring || !autoAiScan) return;
-
-    const interval = setInterval(() => {
-      handleAnalyzeFrame();
-    }, 8000);
-
-    return () => clearInterval(interval);
-  }, [isMonitoring, autoAiScan, handleAnalyzeFrame]);
-
-  // Manual Trigger Simulators for Instant Testing
-  const triggerEyesClosed = () => {
+  // Test Simulators:
+  // Instead of static dummy toggles, they immediately trigger the full event-driven pipeline:
+  // Event detected -> Frame captured -> Sent to Gemini -> Status & safety score updated -> Alert triggered
+  const triggerEyesClosedSimulation = () => {
     soundManager.unlockAudioContext();
     setDriverState(prev => ({
       ...prev,
       eyesClosed: true,
-      ear: 0.11,
+      ear: 0.10,
       drowsinessLevel: 85,
-      alertLevel: 'RED',
-      microSleepCount: prev.microSleepCount + 1,
-      lastAiMessage: "DROWSINESS DETECTED: Eyes closed for > 2 seconds!"
     }));
-    soundManager.playCriticalAlarm(true);
-    soundManager.speakText("Drowsiness alert! Wake up!", true);
+    dispatchSafetyEventToGemini('PROLONGED_EYE_CLOSURE', {
+      ear: 0.10,
+      mar: 0.12,
+      yaw: 0,
+      driverPresent: true,
+      closureDurationMs: 1400,
+    });
   };
 
-  const triggerYawn = () => {
+  const triggerYawnSimulation = () => {
     soundManager.unlockAudioContext();
     setDriverState(prev => ({
       ...prev,
       isYawning: true,
       mar: 0.68,
       drowsinessLevel: Math.min(100, prev.drowsinessLevel + 25),
-      alertLevel: prev.drowsinessLevel > 50 ? 'RED' : 'YELLOW',
-      yawnCount: prev.yawnCount + 1,
-      lastAiMessage: "FATIGUE WARNING: Frequent yawning detected."
     }));
-    soundManager.playWarningBeep(true);
+    dispatchSafetyEventToGemini('YAWNING', {
+      ear: 0.28,
+      mar: 0.68,
+      yaw: 0,
+      driverPresent: true,
+    });
   };
 
-  const triggerDistraction = () => {
+  const triggerDistractionSimulation = () => {
     soundManager.unlockAudioContext();
     setDriverState(prev => ({
       ...prev,
       isDistracted: true,
-      headTilt: 45,
-      alertLevel: 'YELLOW',
-      distractionCount: prev.distractionCount + 1,
-      lastAiMessage: "DISTRACTION ALERT: Keep eyes focused on the road!"
+      headTilt: 38,
     }));
-    soundManager.playWarningBeep(true);
+    dispatchSafetyEventToGemini('DISTRACTION', {
+      ear: 0.30,
+      mar: 0.14,
+      yaw: 38,
+      driverPresent: true,
+    });
+  };
+
+  const triggerNoDriverSimulation = () => {
+    soundManager.unlockAudioContext();
+    setDriverState(prev => ({
+      ...prev,
+      driverPresent: false,
+    }));
+    dispatchSafetyEventToGemini('DRIVER_ABSENT', {
+      driverPresent: false,
+      ear: 0,
+      mar: 0,
+      yaw: 0,
+    });
+  };
+
+  const triggerAbnormalPostureSimulation = () => {
+    soundManager.unlockAudioContext();
+    setDriverState(prev => ({
+      ...prev,
+      abnormalBehavior: true,
+      headTilt: -25,
+    }));
+    dispatchSafetyEventToGemini('ABNORMAL_BEHAVIOR', {
+      pitch: 28,
+      yaw: 5,
+      ear: 0.18,
+      driverPresent: true,
+      abnormalBehavior: true,
+    });
   };
 
   const resetSimulation = () => {
@@ -599,32 +782,164 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     soundManager.unlockAudioContext();
     setDriverState(prev => ({
       ...prev,
+      driverPresent: true,
       eyesClosed: false,
       isYawning: false,
       isDistracted: false,
       isUsingPhone: false,
+      abnormalBehavior: false,
       ear: 0.32,
       mar: 0.14,
       headTilt: 0,
-      drowsinessLevel: 10,
+      drowsinessLevel: 5,
+      safetyScore: 100,
       alertLevel: 'GREEN',
-      lastAiMessage: "Driver alert and focused on the road.",
+      lastAiMessage: "Driver alert, centered, and verified on the road.",
+      lastEventTrigger: undefined,
     }));
+    setActiveEventTrigger(null);
   };
+
+  // Dedicated Mobile UI: Focused strictly on Live Camera & Driver Attentiveness State
+  if (isMobileMode) {
+    return (
+      <div id="mobile-live-camera-card" className="w-full">
+        <div className="text-center mb-2">
+          <span className="text-[11px] font-mono font-bold tracking-[0.2em] text-slate-400 uppercase">
+            LIVE CAMERA
+          </span>
+        </div>
+
+        {/* Video / Camera Canvas Container */}
+        <div className="relative w-full aspect-video bg-slate-950/95 rounded-2xl overflow-hidden border border-white/15 shadow-inner flex items-center justify-center">
+          {isMonitoring ? (
+            <>
+              {/* Live Camera Video Feed */}
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className={`w-full h-full object-cover ${isMirrored ? 'transform -scale-x-100' : ''} ${
+                  isSimulatorMode || !cameraPermission ? 'opacity-0' : 'opacity-100'
+                }`}
+              />
+
+              {/* Real-Time Facial Landmarks Overlay Canvas */}
+              <canvas
+                ref={overlayCanvasRef}
+                className="absolute inset-0 w-full h-full pointer-events-none z-10"
+              />
+
+              {/* Top Controls: Flip Mirror & Retry */}
+              <div className="absolute top-2.5 right-2.5 z-20 flex items-center gap-1.5 backdrop-blur-md bg-black/80 px-2 py-1 rounded-lg border border-white/20 text-[11px] shadow-md">
+                {isSimulatorMode && (
+                  <button
+                    onClick={startCameraStream}
+                    className="text-amber-400 hover:text-amber-300 font-mono text-[10px] px-1"
+                    title="Retry live camera feed"
+                  >
+                    Retry Cam
+                  </button>
+                )}
+                <button
+                  onClick={() => setIsMirrored(prev => !prev)}
+                  className="p-0.5 text-slate-300 hover:text-white"
+                  title={isMirrored ? "Disable mirror view" : "Enable mirror view"}
+                >
+                  <FlipHorizontal className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Critical Alert Flasher */}
+              <AnimatePresence>
+                {driverState.alertLevel === 'RED' && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.95 }}
+                    animate={{
+                      opacity: [0.85, 1, 0.85],
+                      backgroundColor: ['rgba(185,28,28,0.55)', 'rgba(220,38,38,0.85)', 'rgba(185,28,28,0.55)']
+                    }}
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    transition={{ duration: 0.4, repeat: Infinity, repeatType: 'reverse' }}
+                    className="absolute inset-0 backdrop-blur-sm flex flex-col items-center justify-center text-center p-3 z-30"
+                  >
+                    <AlertOctagon className="w-12 h-12 text-white mb-1 drop-shadow-[0_0_20px_rgba(255,255,255,1)]" />
+                    <h3 className="text-lg font-black text-white tracking-wider uppercase drop-shadow">
+                      {driverState.eyesClosed ? 'MICRO-SLEEP DETECTED!' : 'DROWSINESS ALERT!'}
+                    </h3>
+                    <p className="text-[11px] text-red-100 font-bold bg-red-950/90 px-3 py-0.5 rounded-full border border-red-400/50 mt-1">
+                      PULL OVER TO SAFETY IMMEDIATELY
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </>
+          ) : (
+            <div className="text-center p-6 text-slate-400 flex flex-col items-center">
+              <Camera className="w-10 h-10 text-slate-500 mb-2" />
+              <p className="text-xs font-semibold text-slate-300">Driver Camera Standby</p>
+              <button
+                onClick={() => setDriverState(prev => ({ ...prev, isMonitoring: true }))}
+                className="mt-2.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-900/50 transition-colors"
+              >
+                Start Camera Feed
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Stream Error Notice if applicable */}
+        {streamError && isMonitoring && (
+          <div className="mt-2 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] flex items-center justify-between">
+            <span className="truncate">{streamError}</span>
+            <button
+              onClick={startCameraStream}
+              className="underline text-amber-200 hover:text-white font-medium ml-2 text-[11px] shrink-0"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {/* Prominent Attentiveness State Badge */}
+        <div className="mt-3 flex items-center justify-center">
+          {driverState.alertLevel === 'GREEN' && (
+            <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 text-sm font-bold tracking-wide shadow-[0_0_20px_rgba(16,185,129,0.2)]">
+              <span className="text-base">🟢</span>
+              <span className="tracking-wider">ATTENTIVE</span>
+            </div>
+          )}
+          {driverState.alertLevel === 'YELLOW' && (
+            <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/15 border border-amber-500/30 text-amber-300 text-sm font-bold tracking-wide shadow-[0_0_20px_rgba(245,158,11,0.2)]">
+              <span className="text-base">🟡</span>
+              <span className="tracking-wider">DROWSY</span>
+            </div>
+          )}
+          {driverState.alertLevel === 'RED' && (
+            <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-red-500/20 border border-red-500/40 text-red-300 text-sm font-bold tracking-wide shadow-[0_0_25px_rgba(239,68,68,0.3)] animate-pulse">
+              <span className="text-base">🔴</span>
+              <span className="tracking-wider">CRITICAL ALERT</span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-4 shadow-2xl shadow-black/50 flex flex-col justify-between h-full">
       {/* Video / Camera Canvas Container */}
-      <div className="relative w-full aspect-video bg-slate-950/80 rounded-2xl overflow-hidden border border-white/10 flex items-center justify-center">
+      <div className="relative w-full aspect-video bg-slate-950/90 rounded-2xl overflow-hidden border border-white/10 flex items-center justify-center">
         {isMonitoring ? (
           <>
-            {/* Live Video Element */}
+            {/* Live Camera Video Feed */}
             <video
               ref={videoRef}
               autoPlay
               playsInline
               muted
-              className={`w-full h-full object-cover transform -scale-x-100 ${
+              className={`w-full h-full object-cover ${isMirrored ? 'transform -scale-x-100' : ''} ${
                 isSimulatorMode || !cameraPermission ? 'opacity-0' : 'opacity-100'
               }`}
             />
@@ -635,123 +950,97 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
               className="absolute inset-0 w-full h-full pointer-events-none z-10"
             />
 
-            {/* Top Live Face Tracking Indicator Banner */}
-            <div className="absolute top-2 left-2 z-20 flex items-center gap-2 backdrop-blur-md bg-black/75 px-3 py-1 rounded-xl border border-white/20 text-xs shadow-lg">
-              {faceDetected ? (
+            {/* Top Left: Driver Presence Indicator */}
+            <div className="absolute top-2 left-2 z-20 flex items-center gap-2 backdrop-blur-md bg-black/80 px-3 py-1 rounded-xl border border-white/20 text-xs shadow-lg">
+              {faceDetected && driverState.driverPresent ? (
                 <>
                   <UserCheck className="w-3.5 h-3.5 text-emerald-400" />
                   <span className="font-semibold text-emerald-300">
-                    {isSimulatorMode ? 'Sim Face Tracked' : 'Face Tracked'}
+                    {isSimulatorMode ? 'Sim Driver Present' : 'Driver Present'}
                   </span>
                 </>
               ) : (
                 <>
-                  <UserX className="w-3.5 h-3.5 text-amber-400" />
-                  <span className="font-semibold text-amber-300">Face Searching...</span>
+                  <UserX className="w-3.5 h-3.5 text-red-400 animate-pulse" />
+                  <span className="font-semibold text-red-300">No Driver in Frame</span>
                 </>
               )}
-              <span className="text-slate-400 font-mono">| EAR: {driverState.ear.toFixed(2)}</span>
+              <span className="text-slate-400 font-mono text-[11px]">| EAR: {driverState.ear.toFixed(2)}</span>
             </div>
 
-            {/* Camera Diagnostic / Mode Switch Badge */}
-            <div className="absolute top-2 right-2 z-20 flex items-center gap-1.5 backdrop-blur-md bg-black/75 px-2.5 py-1 rounded-xl border border-white/20 text-[11px] shadow-lg">
+            {/* Top Right: Camera Switcher & Mirror Toggle */}
+            <div className="absolute top-2 right-2 z-20 flex items-center gap-1.5 backdrop-blur-md bg-black/80 px-2 py-1 rounded-xl border border-white/20 text-[11px] shadow-lg">
               {cameraPermission && !isSimulatorMode ? (
                 <div className="flex items-center gap-1 text-emerald-400">
-                  <Video className="w-3 h-3" />
-                  <span className="font-medium">Webcam Live</span>
+                  <Video className="w-3.5 h-3.5" />
+                  <span className="font-medium">Live Feed</span>
                 </div>
               ) : (
                 <button
                   onClick={startCameraStream}
                   className="flex items-center gap-1 text-sky-400 hover:text-sky-300 transition-colors"
-                  title="Click to retry live webcam access"
+                  title="Click to retry live camera"
                 >
-                  <VideoOff className="w-3 h-3 text-amber-400" />
-                  <span className="font-medium">Sim Mode (Click to retry Cam)</span>
+                  <VideoOff className="w-3.5 h-3.5 text-amber-400" />
+                  <span className="font-medium">Sim Mode (Retry Cam)</span>
                 </button>
               )}
+
+              {/* Mirror Toggle Button */}
+              <button
+                onClick={() => setIsMirrored(prev => !prev)}
+                className="p-1 text-slate-300 hover:text-white transition-colors ml-1"
+                title={isMirrored ? "Disable mirror view" : "Enable mirror view"}
+              >
+                <FlipHorizontal className="w-3.5 h-3.5" />
+              </button>
             </div>
 
-            {/* AI Bounding Box Glow Effect */}
-            <motion.div
-              key={driverState.alertLevel}
-              animate={
-                driverState.alertLevel === 'RED'
-                  ? {
-                      scale: [1, 1.02, 1],
-                      borderColor: ['rgba(239, 68, 68, 1)', 'rgba(248, 113, 113, 1)', 'rgba(239, 68, 68, 1)'],
-                      boxShadow: [
-                        '0 0 0px rgba(239, 68, 68, 0)',
-                        '0 0 30px rgba(239, 68, 68, 0.8)',
-                        '0 0 0px rgba(239, 68, 68, 0)'
-                      ],
-                      backgroundColor: ['rgba(239, 68, 68, 0.05)', 'rgba(239, 68, 68, 0.25)', 'rgba(239, 68, 68, 0.05)']
-                    }
-                  : driverState.alertLevel === 'YELLOW'
-                  ? {
-                      scale: [1, 1.01, 1],
-                      borderColor: ['rgba(251, 191, 36, 1)', 'rgba(254, 240, 138, 1)', 'rgba(251, 191, 36, 1)'],
-                      boxShadow: [
-                        '0 0 0px rgba(251, 191, 36, 0)',
-                        '0 0 18px rgba(251, 191, 36, 0.6)',
-                        '0 0 0px rgba(251, 191, 36, 0)'
-                      ],
-                      backgroundColor: 'rgba(251, 191, 36, 0.05)'
-                    }
-                  : {
-                      scale: 1,
-                      borderColor: 'rgba(96, 165, 250, 0.6)',
-                      boxShadow: '0 0 0px rgba(0,0,0,0)',
-                      backgroundColor: 'rgba(0,0,0,0)'
-                    }
-              }
-              transition={
-                driverState.alertLevel === 'RED'
-                  ? { duration: 0.5, repeat: Infinity, ease: 'easeInOut' }
-                  : driverState.alertLevel === 'YELLOW'
-                  ? { duration: 1.0, repeat: Infinity, ease: 'easeInOut' }
-                  : { duration: 0.3 }
-              }
-              className={`absolute inset-4 border-2 rounded-xl pointer-events-none z-0 ${
-                driverState.alertLevel === 'RED' ? 'text-red-500' :
-                driverState.alertLevel === 'YELLOW' ? 'text-amber-400' :
-                'text-blue-400'
-              }`}
-            />
+            {/* Active Gemini Event Analysis Banner */}
+            <AnimatePresence>
+              {isAiAnalyzing && (
+                <motion.div
+                  initial={{ opacity: 0, y: -20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -20 }}
+                  className="absolute top-12 left-1/2 -translate-x-1/2 z-30 flex items-center gap-2 backdrop-blur-xl bg-blue-950/90 border border-blue-400/50 px-3.5 py-1.5 rounded-full text-xs text-blue-200 shadow-xl shadow-blue-950/80"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-blue-300" />
+                  <span className="font-semibold">
+                    Potential Event: {activeEventTrigger?.replace(/_/g, ' ') || 'Driver Check'} → Verifying with Gemini AI...
+                  </span>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-            {/* Critical Alert Flasher with Framer Motion */}
+            {/* Critical Alert Flasher */}
             <AnimatePresence>
               {driverState.alertLevel === 'RED' && (
                 <motion.div
-                  initial={{ opacity: 0, scale: 0.85 }}
+                  initial={{ opacity: 0, scale: 0.9 }}
                   animate={{
                     opacity: [0.85, 1, 0.85],
                     scale: [1, 1.02, 1],
-                    backgroundColor: ['rgba(220,38,38,0.4)', 'rgba(239,68,68,0.7)', 'rgba(220,38,38,0.4)']
+                    backgroundColor: ['rgba(185,28,28,0.45)', 'rgba(220,38,38,0.7)', 'rgba(185,28,28,0.45)']
                   }}
                   exit={{ opacity: 0, scale: 0.9 }}
-                  transition={{
-                    duration: 0.45,
-                    repeat: Infinity,
-                    repeatType: 'reverse',
-                    ease: 'easeInOut'
-                  }}
+                  transition={{ duration: 0.45, repeat: Infinity, repeatType: 'reverse' }}
                   className="absolute inset-0 backdrop-blur-sm flex flex-col items-center justify-center text-center p-4 z-30"
                 >
                   <motion.div
                     animate={{ rotate: [-6, 6, -6], scale: [1, 1.15, 1] }}
                     transition={{ duration: 0.35, repeat: Infinity, repeatType: 'reverse' }}
                   >
-                    <AlertOctagon className="w-16 h-16 text-white mb-2 drop-shadow-[0_0_20px_rgba(255,255,255,1)]" />
+                    <AlertOctagon className="w-16 h-16 text-white mb-2 drop-shadow-[0_0_25px_rgba(255,255,255,1)]" />
                   </motion.div>
-                  <motion.h3
-                    animate={{ scale: [1, 1.08, 1] }}
-                    transition={{ duration: 0.45, repeat: Infinity }}
-                    className="text-2xl font-black text-white tracking-wider uppercase drop-shadow-lg"
-                  >
-                    DROWSINESS DETECTED!
-                  </motion.h3>
-                  <p className="text-xs text-red-100 font-bold mt-1 tracking-wide bg-red-950/80 px-3 py-1 rounded-full border border-red-400/50 shadow-md">
+                  <h3 className="text-2xl font-black text-white tracking-wider uppercase drop-shadow-lg">
+                    {driverState.eyesClosed
+                      ? 'MICRO-SLEEP DETECTED!'
+                      : !driverState.driverPresent
+                      ? 'DRIVER NOT DETECTED!'
+                      : 'DROWSINESS ALERT!'}
+                  </h3>
+                  <p className="text-xs text-red-100 font-bold mt-1 tracking-wide bg-red-950/80 px-3.5 py-1 rounded-full border border-red-400/50 shadow-md">
                     PULL OVER IMMEDIATELY TO A SAFE SPOT
                   </p>
                 </motion.div>
@@ -761,9 +1050,9 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         ) : (
           <div className="text-center p-6 text-slate-400 flex flex-col items-center">
             <Camera className="w-12 h-12 text-slate-500 mb-2" />
-            <p className="text-sm font-medium text-slate-300">Driver Camera Standby</p>
+            <p className="text-sm font-medium text-slate-300">Driver Safety Camera Standby</p>
             <p className="text-xs text-slate-400 mt-1 max-w-xs">
-              Click &quot;Start Monitor&quot; above to enable live AI vision & real-time face tracking.
+              Click &quot;Start Monitor&quot; to activate local computer vision and Gemini safety event analysis.
             </p>
           </div>
         )}
@@ -771,7 +1060,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
       {/* Stream Error Notice if applicable */}
       {streamError && isMonitoring && (
-        <div className="mt-2 px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] flex items-center justify-between">
+        <div className="mt-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] flex items-center justify-between">
           <span>{streamError}</span>
           <button
             onClick={startCameraStream}
@@ -782,97 +1071,201 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         </div>
       )}
 
-      {/* AI Message & Status Bar */}
-      <div className="mt-3 backdrop-blur-md bg-white/5 rounded-xl p-3 border border-white/10">
-        <div className="flex items-center justify-between text-xs mb-1">
-          <span className="text-slate-300 flex items-center gap-1.5 font-medium">
-            <Sparkles className="w-3.5 h-3.5 text-blue-400" /> AI Driver Observation
-          </span>
+      {/* Architecture Pipeline Telemetry Bar */}
+      <div className="mt-2.5 backdrop-blur-md bg-white/5 rounded-xl p-2.5 border border-white/10">
+        <div className="flex items-center justify-between text-xs mb-1.5 flex-wrap gap-1">
           <div className="flex items-center gap-2">
-            <label className="flex items-center gap-1 text-[11px] text-slate-400 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={autoAiScan}
-                onChange={(e) => setAutoAiScan(e.target.checked)}
-                className="rounded border-slate-700 text-blue-600 focus:ring-0 bg-slate-900"
-              />
-              <span>Auto AI Scan</span>
-            </label>
-            <span className={`font-semibold ${
-              driverState.alertLevel === 'RED' ? 'text-red-400' :
-              driverState.alertLevel === 'YELLOW' ? 'text-amber-400' : 'text-emerald-400'
+            <span className="text-slate-300 flex items-center gap-1.5 font-medium">
+              <Sparkles className="w-3.5 h-3.5 text-blue-400" />
+              <span>AI Safety Assessment</span>
+            </span>
+            {isAiConfigured === false ? (
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                AI Analysis: Not configured
+              </span>
+            ) : isAiConfigured === true ? (
+              <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                AI Analysis: Configured
+              </span>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2">
+            <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+              driverState.alertLevel === 'RED' ? 'bg-red-500/20 text-red-400 border border-red-500/30' :
+              driverState.alertLevel === 'YELLOW' ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' :
+              'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
             }`}>
+              Alert: {driverState.alertLevel}
+            </span>
+            <span className="text-[11px] font-mono text-slate-300">
               Fatigue: {driverState.drowsinessLevel}%
             </span>
           </div>
         </div>
-        <p className="text-xs font-mono text-slate-200 truncate">
-          {driverState.lastAiMessage || "Monitoring facial posture and eye blink rates..."}
+
+        {/* Structured telemetry pills representing Gemini frame analysis */}
+        <div className="grid grid-cols-4 sm:grid-cols-8 gap-1 py-1.5 border-y border-white/5 text-[10px] font-mono">
+          <div className="bg-black/30 px-1.5 py-1 rounded text-center">
+            <span className="text-slate-400 block text-[9px]">Driver</span>
+            <span className={latestAiAnalysis?.driverDetected ?? driverState.driverPresent ? "text-emerald-300 font-bold" : "text-red-400 font-bold"}>
+              {latestAiAnalysis?.driverDetected ?? driverState.driverPresent ? "Present" : "Absent"}
+            </span>
+          </div>
+          <div className="bg-black/30 px-1.5 py-1 rounded text-center">
+            <span className="text-slate-400 block text-[9px]">Attention</span>
+            <span className={latestAiAnalysis?.attention === 'distracted' || driverState.isDistracted ? "text-amber-300 font-bold" : "text-emerald-300 font-bold"}>
+              {latestAiAnalysis?.attention || (driverState.isDistracted ? 'distracted' : 'focused')}
+            </span>
+          </div>
+          <div className="bg-black/30 px-1.5 py-1 rounded text-center">
+            <span className="text-slate-400 block text-[9px]">Drowsiness</span>
+            <span className={latestAiAnalysis?.drowsiness === 'high' || driverState.eyesClosed ? "text-red-400 font-bold" : latestAiAnalysis?.drowsiness === 'medium' || driverState.isYawning ? "text-amber-300 font-bold" : "text-emerald-300 font-bold"}>
+              {latestAiAnalysis?.drowsiness || (driverState.eyesClosed ? 'high' : driverState.isYawning ? 'medium' : 'low')}
+            </span>
+          </div>
+          <div className="bg-black/30 px-1.5 py-1 rounded text-center">
+            <span className="text-slate-400 block text-[9px]">Eyes</span>
+            <span className={latestAiAnalysis?.eyes === 'closed' || driverState.eyesClosed ? "text-red-400 font-bold" : "text-emerald-300 font-bold"}>
+              {latestAiAnalysis?.eyes || (driverState.eyesClosed ? 'closed' : 'open')}
+            </span>
+          </div>
+          <div className="bg-black/30 px-1.5 py-1 rounded text-center">
+            <span className="text-slate-400 block text-[9px]">Yawning</span>
+            <span className={latestAiAnalysis?.yawning || driverState.isYawning ? "text-amber-300 font-bold" : "text-slate-300 font-bold"}>
+              {latestAiAnalysis?.yawning || driverState.isYawning ? "Yes" : "No"}
+            </span>
+          </div>
+          <div className="bg-black/30 px-1.5 py-1 rounded text-center">
+            <span className="text-slate-400 block text-[9px]">Distraction</span>
+            <span className={latestAiAnalysis?.distraction || driverState.isDistracted ? "text-amber-300 font-bold" : "text-slate-300 font-bold"}>
+              {latestAiAnalysis?.distraction || driverState.isDistracted ? "Yes" : "No"}
+            </span>
+          </div>
+          <div className="bg-black/30 px-1.5 py-1 rounded text-center">
+            <span className="text-slate-400 block text-[9px]">Risk Level</span>
+            <span className={driverState.alertLevel === 'RED' ? "text-red-400 font-bold" : driverState.alertLevel === 'YELLOW' ? "text-amber-300 font-bold" : "text-emerald-300 font-bold"}>
+              {latestAiAnalysis?.riskLevel ? latestAiAnalysis.riskLevel.toUpperCase() : driverState.alertLevel === 'RED' ? 'HIGH' : driverState.alertLevel === 'YELLOW' ? 'MEDIUM' : 'LOW'}
+            </span>
+          </div>
+          <div className="bg-black/30 px-1.5 py-1 rounded text-center">
+            <span className="text-slate-400 block text-[9px]">Confidence</span>
+            <span className="text-blue-300 font-bold">
+              {Math.round((latestAiAnalysis?.confidence ?? 0.92) * 100)}%
+            </span>
+          </div>
+        </div>
+
+        <p className="text-xs font-mono text-slate-200 truncate mt-1.5">
+          {driverState.lastAiMessage || (isAiConfigured === false ? "AI Analysis: Not configured" : "Monitoring facial posture, gaze direction, and eye closure rate...")}
         </p>
       </div>
 
-      {/* Control Buttons & Test Simulators */}
+      {/* Verified Event Detail Badge if available */}
+      {lastVerifiedEvent && (
+        <div className="mt-2 px-3 py-1.5 rounded-xl bg-blue-950/40 border border-blue-500/20 flex items-center justify-between text-[11px]">
+          <div className="flex items-center gap-2">
+            {lastVerifiedEvent.alertLevel === 'RED' ? (
+              <ShieldAlert className="w-4 h-4 text-red-400" />
+            ) : (
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            )}
+            <span className="text-slate-300">
+              Last Verified: <strong className="text-white">{lastVerifiedEvent.trigger.replace(/_/g, ' ')}</strong> at {lastVerifiedEvent.timestamp} ({lastVerifiedEvent.confidence}% conf)
+            </span>
+          </div>
+          <span className="text-blue-300 font-medium truncate max-w-[180px]">{lastVerifiedEvent.action}</span>
+        </div>
+      )}
+
+      {/* Action Controls & Real-Time Event Test Buttons */}
       <div className="mt-3 space-y-2">
-        {/* Analyze Frame with Gemini AI */}
+        {/* Manual On-Demand Verification */}
         <button
-          onClick={handleAnalyzeFrame}
-          disabled={isAiAnalyzing}
+          onClick={() => dispatchSafetyEventToGemini('MANUAL_VERIFY')}
+          disabled={isAiAnalyzing || !isMonitoring}
           id="btn-analyze-driver-frame"
-          className="w-full flex items-center justify-center gap-2 backdrop-blur-md bg-blue-600/90 hover:bg-blue-500 disabled:bg-blue-900/50 text-white py-2 px-3 rounded-xl text-xs font-semibold shadow-lg shadow-blue-950/50 transition-all border border-blue-400/30"
+          className="w-full flex items-center justify-center gap-2 backdrop-blur-md bg-blue-600/90 hover:bg-blue-500 disabled:bg-blue-900/40 text-white py-2 px-3 rounded-xl text-xs font-semibold shadow-lg shadow-blue-950/50 transition-all border border-blue-400/30"
         >
           {isAiAnalyzing ? (
             <>
               <RefreshCw className="w-4 h-4 animate-spin text-blue-200" />
-              <span>Analyzing Frame with Gemini AI...</span>
+              <span>Analyzing Snapshot with Gemini AI...</span>
             </>
           ) : (
             <>
               <Scan className="w-4 h-4 text-blue-200" />
-              <span>Analyze Current Frame with Gemini AI</span>
+              <span>Verify Current Frame with Gemini AI</span>
             </>
           )}
         </button>
 
-        {/* Quick Simulation Test Buttons */}
-        <div className="grid grid-cols-4 gap-1.5 pt-1">
+        {/* Potential Safety Event Test Triggers:
+            Demonstrates the exact pipeline:
+            Local Event Detected -> Capture Frame -> Send to Gemini -> Update Status & Score -> Alert */}
+        <div className="grid grid-cols-6 gap-1 pt-1">
           <button
-            onClick={triggerEyesClosed}
+            onClick={triggerEyesClosedSimulation}
+            disabled={!isMonitoring}
             id="btn-sim-eyes-closed"
-            title="Simulate Eyes Closed"
-            className="backdrop-blur-md bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/40 text-slate-200 hover:text-red-300 p-2 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1"
+            title="Simulate Prolonged Eye Closure (Micro-sleep)"
+            className="backdrop-blur-md bg-white/5 hover:bg-red-500/20 border border-white/10 hover:border-red-500/40 text-slate-200 hover:text-red-300 p-1.5 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1 disabled:opacity-40"
           >
             <Eye className="w-3.5 h-3.5 text-red-400" />
-            <span>Eyes Closed</span>
+            <span className="truncate w-full text-center">Eyes Closed</span>
           </button>
 
           <button
-            onClick={triggerYawn}
+            onClick={triggerYawnSimulation}
+            disabled={!isMonitoring}
             id="btn-sim-yawn"
-            title="Simulate Yawning"
-            className="backdrop-blur-md bg-white/5 hover:bg-amber-500/20 border border-white/10 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 p-2 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1"
+            title="Simulate Yawning Fatigue"
+            className="backdrop-blur-md bg-white/5 hover:bg-amber-500/20 border border-white/10 hover:border-amber-500/40 text-slate-200 hover:text-amber-300 p-1.5 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1 disabled:opacity-40"
           >
             <Zap className="w-3.5 h-3.5 text-amber-400" />
-            <span>Yawn</span>
+            <span className="truncate w-full text-center">Yawn</span>
           </button>
 
           <button
-            onClick={triggerDistraction}
+            onClick={triggerDistractionSimulation}
+            disabled={!isMonitoring}
             id="btn-sim-distract"
-            title="Simulate Distraction"
-            className="backdrop-blur-md bg-white/5 hover:bg-blue-500/20 border border-white/10 hover:border-blue-500/40 text-slate-200 hover:text-blue-300 p-2 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1"
+            title="Simulate Head-Turn Distraction"
+            className="backdrop-blur-md bg-white/5 hover:bg-sky-500/20 border border-white/10 hover:border-sky-500/40 text-slate-200 hover:text-sky-300 p-1.5 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1 disabled:opacity-40"
           >
-            <AlertOctagon className="w-3.5 h-3.5 text-blue-400" />
-            <span>Distracted</span>
+            <AlertTriangle className="w-3.5 h-3.5 text-sky-400" />
+            <span className="truncate w-full text-center">Distracted</span>
+          </button>
+
+          <button
+            onClick={triggerNoDriverSimulation}
+            disabled={!isMonitoring}
+            id="btn-sim-no-driver"
+            title="Simulate No Driver in Frame"
+            className="backdrop-blur-md bg-white/5 hover:bg-purple-500/20 border border-white/10 hover:border-purple-500/40 text-slate-200 hover:text-purple-300 p-1.5 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1 disabled:opacity-40"
+          >
+            <UserX className="w-3.5 h-3.5 text-purple-400" />
+            <span className="truncate w-full text-center">No Driver</span>
+          </button>
+
+          <button
+            onClick={triggerAbnormalPostureSimulation}
+            disabled={!isMonitoring}
+            id="btn-sim-head-slump"
+            title="Simulate Abnormal Posture / Head Slump"
+            className="backdrop-blur-md bg-white/5 hover:bg-orange-500/20 border border-white/10 hover:border-orange-500/40 text-slate-200 hover:text-orange-300 p-1.5 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1 disabled:opacity-40"
+          >
+            <AlertOctagon className="w-3.5 h-3.5 text-orange-400" />
+            <span className="truncate w-full text-center">Head Slump</span>
           </button>
 
           <button
             onClick={resetSimulation}
             id="btn-sim-reset"
-            title="Reset Alertness"
-            className="backdrop-blur-md bg-white/5 hover:bg-emerald-500/20 border border-white/10 hover:border-emerald-500/40 text-slate-200 hover:text-emerald-300 p-2 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1"
+            title="Reset Driver Alertness"
+            className="backdrop-blur-md bg-white/5 hover:bg-emerald-500/20 border border-white/10 hover:border-emerald-500/40 text-slate-200 hover:text-emerald-300 p-1.5 rounded-xl text-[10px] font-semibold transition-all flex flex-col items-center gap-1"
           >
             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Reset</span>
+            <span className="truncate w-full text-center">Reset</span>
           </button>
         </div>
       </div>

@@ -53,11 +53,29 @@ export const getRawDigitsForIndianLink = (phoneStr: string): string => {
 };
 
 export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverState }) => {
-  const [contacts, setContacts] = useState<EmergencyContact[]>([
-    { id: '1', name: 'Emergency Services (India 112)', phone: '112 / 108', relationship: 'National Emergency', isPrimary: false },
-    { id: '2', name: 'Family Contact (India)', phone: '+91 98765 43210', relationship: 'Family / Guardian', isPrimary: true },
-    { id: '3', name: 'Fleet Supervisor (India)', phone: '+91 91234 56789', relationship: 'Fleet Desk', isPrimary: false },
-  ]);
+  const [contacts, setContacts] = useState<EmergencyContact[]>(() => {
+    try {
+      const saved = localStorage.getItem('drivesafe_emergency_contacts');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch (e) {
+      // fallback
+    }
+    return [
+      { id: '1', name: 'National Emergency Helpline', phone: '112', relationship: 'National Emergency Services', isPrimary: true },
+    ];
+  });
+
+  // Save contacts to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('drivesafe_emergency_contacts', JSON.stringify(contacts));
+    } catch (e) {
+      console.warn("Could not persist contacts to localStorage", e);
+    }
+  }, [contacts]);
 
   const [newContactName, setNewContactName] = useState('');
   const [newContactPhone, setNewContactPhone] = useState('');
@@ -65,6 +83,8 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverSta
   const [isAdding, setIsAdding] = useState(false);
 
   const [isSosActive, setIsSosActive] = useState(false);
+  const [isConfirmingSos, setIsConfirmingSos] = useState(false);
+  const [sosCountdown, setSosCountdown] = useState(5);
   const [sosSentMessage, setSosSentMessage] = useState<string | null>(null);
 
   // SMS Gateway Configuration
@@ -79,23 +99,8 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverSta
   const [showGatewaySettings, setShowGatewaySettings] = useState(false);
   const [showDispatchLogs, setShowDispatchLogs] = useState(false);
 
-  // Real-time SMS Dispatch Logs
-  const [dispatchLogs, setDispatchLogs] = useState<SMSDispatchLog[]>([
-    {
-      id: 'init-1',
-      timestamp: new Date(Date.now() - 360000).toLocaleTimeString(),
-      recipientName: 'Family Contact (India)',
-      recipientPhone: '+91 98765 43210',
-      isIndianNumber: true,
-      status: 'DELIVERED',
-      triggerReason: 'System Initialization & Geofence Sync',
-      location: 'NH-48 Highway Express Corridor',
-      gpsCoords: '19.0760, 72.8777',
-      gateway: 'Indian Telecom Emergency DLT Gateway (+91 Primary Route)',
-      messagePreview: '[🚨 DRIVESAFE SOS] Contact registered for telematics emergency broadcast.',
-      messageId: 'DLT-IND-948201',
-    }
-  ]);
+  // Real-time SMS Dispatch Logs (starts clean, no invented mock numbers)
+  const [dispatchLogs, setDispatchLogs] = useState<SMSDispatchLog[]>([]);
 
   // Cooldown timer state for automatic dispatch
   const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
@@ -127,10 +132,13 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverSta
     triggerReason: string,
     isManualTest: boolean = false
   ) => {
-    const lat = speedData.latitude ?? 19.0760;
-    const lon = speedData.longitude ?? 72.8777;
-    const locationName = speedData.locationName || 'Indian Highway Travel Corridor';
-    const speed = speedData.currentSpeed || 0;
+    const hasGps = speedData.latitude !== null && speedData.longitude !== null;
+    const lat = speedData.latitude;
+    const lon = speedData.longitude;
+    const locationName = hasGps
+      ? `${speedData.locationName} (${lat?.toFixed(4)}, ${lon?.toFixed(4)})`
+      : `Location Unavailable (${speedData.gpsStatus === 'denied' ? 'Permission Denied' : 'GPS Offline'})`;
+    const speed = speedData.currentSpeedKmh || speedData.currentSpeed || 0;
     const drowsiness = driverState?.drowsinessLevel || (isManualTest ? 45 : 85);
 
     const indianContacts = targetContacts.filter(c => isIndianMobileNumber(c.phone));
@@ -269,15 +277,19 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverSta
     // If it's an Indian mobile number, prepare automated emergency SOS text template & auto-dispatch trigger
     if (isIndian) {
       const rawDigits = getRawDigitsForIndianLink(newContactPhone);
-      const lat = speedData.latitude ?? 19.0760;
-      const lon = speedData.longitude ?? 72.8777;
-      const mapsUrl = `https://maps.google.com/?q=${lat.toFixed(5)},${lon.toFixed(5)}`;
+      const hasGps = speedData.latitude !== null && speedData.longitude !== null;
+      const lat = speedData.latitude;
+      const lon = speedData.longitude;
+      const mapsUrl = hasGps ? `https://maps.google.com/?q=${lat?.toFixed(5)},${lon?.toFixed(5)}` : 'Location unavailable (GPS Offline)';
+      const locationInfo = hasGps
+        ? `${speedData.locationName} (${lat?.toFixed(4)}, ${lon?.toFixed(4)})`
+        : `GPS Offline (${speedData.gpsStatus === 'denied' ? 'Permission Denied' : 'Signal Unavailable'})`;
       
       const autoMessage = `[🚨 DRIVESAFE SOS ALERT]
 Namaste ${newContactName},
 You are registered as an Emergency Contact for live driver safety monitoring.
 In case of critical fatigue or emergency, automated SMS alerts with live GPS tracking will be sent to this Indian number (+91).
-Current GPS: ${speedData.locationName || 'India Highway'} (${lat.toFixed(4)}, ${lon.toFixed(4)})
+Current GPS: ${locationInfo}
 Live Maps: ${mapsUrl}`;
 
       const encodedMessage = encodeURIComponent(autoMessage);
@@ -320,24 +332,62 @@ Live Maps: ${mapsUrl}`;
     setContacts(prev => prev.filter(c => c.id !== id));
   };
 
-  const handleTriggerManualSOS = () => {
+  // SOS Countdown Confirmation Effect
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+    if (isConfirmingSos && sosCountdown > 0) {
+      timer = setTimeout(() => {
+        setSosCountdown(prev => prev - 1);
+        soundManager.playWarningBeep();
+      }, 1000);
+    } else if (isConfirmingSos && sosCountdown === 0) {
+      handleConfirmDispatch();
+    }
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [isConfirmingSos, sosCountdown]);
+
+  const handleInitiateSOS = () => {
+    soundManager.unlockAudioContext();
+    soundManager.playWarningBeep(true);
+    setSosCountdown(5);
+    setIsConfirmingSos(true);
+  };
+
+  const handleCancelSOS = () => {
+    setIsConfirmingSos(false);
+    setSosCountdown(5);
+    soundManager.speakText("Emergency SOS canceled.");
+  };
+
+  const handleConfirmDispatch = () => {
+    setIsConfirmingSos(false);
     setIsSosActive(true);
-    dispatchSMSViaGateway(contacts, 'Manual Driver SOS Button Triggered', false);
+    dispatchSMSViaGateway(contacts, 'Manual Driver SOS Button Triggered (Confirmed)', false);
     setTimeout(() => {
       setIsSosActive(false);
-    }, 2000);
+    }, 2500);
   };
 
   const handleSendAutomatedWhatsApp = (contact: EmergencyContact) => {
     const rawDigits = getRawDigitsForIndianLink(contact.phone);
-    const lat = speedData.latitude ?? 19.0760;
-    const lon = speedData.longitude ?? 72.8777;
-    const mapsUrl = `https://maps.google.com/?q=${lat.toFixed(5)},${lon.toFixed(5)}`;
+    const hasGps = speedData.latitude !== null && speedData.longitude !== null;
+    const lat = speedData.latitude;
+    const lon = speedData.longitude;
+    const mapsUrl = hasGps ? `https://maps.google.com/?q=${lat?.toFixed(5)},${lon?.toFixed(5)}` : 'GPS Offline';
+    const locationInfo = hasGps
+      ? `${speedData.locationName} (${lat?.toFixed(4)}, ${lon?.toFixed(4)})`
+      : `GPS Offline (${speedData.gpsStatus === 'denied' ? 'Permission Denied' : 'Signal Unavailable'})`;
     
+    const speedText = speedData.isSpeedAvailable && speedData.currentSpeedKmh !== null
+      ? `${Math.round(speedData.currentSpeedKmh)} km/h`
+      : 'Speed unavailable';
+
     const message = `🚨 [URGENT EMERGENCY SOS]
 From: DriveSafe AI Vehicle Telematics
-Driver Location: ${speedData.locationName || 'Highway Corridor'} (${lat.toFixed(4)}, ${lon.toFixed(4)})
-Current Speed: ${Math.round(speedData.currentSpeed || 0)} km/h
+Driver Location: ${locationInfo}
+Current Speed: ${speedText}
 Live Tracking Map: ${mapsUrl}
 Please check on the driver immediately!`;
 
@@ -347,11 +397,15 @@ Please check on the driver immediately!`;
 
   const handleSendAutomatedSMS = (contact: EmergencyContact) => {
     const rawDigits = getRawDigitsForIndianLink(contact.phone);
-    const lat = speedData.latitude ?? 19.0760;
-    const lon = speedData.longitude ?? 72.8777;
-    const mapsUrl = `https://maps.google.com/?q=${lat.toFixed(5)},${lon.toFixed(5)}`;
+    const hasGps = speedData.latitude !== null && speedData.longitude !== null;
+    const lat = speedData.latitude;
+    const lon = speedData.longitude;
+    const mapsUrl = hasGps ? `https://maps.google.com/?q=${lat?.toFixed(5)},${lon?.toFixed(5)}` : 'Unavailable';
+    const locationInfo = hasGps
+      ? `${speedData.locationName} (${lat?.toFixed(4)}, ${lon?.toFixed(4)})`
+      : `GPS Offline (${speedData.gpsStatus === 'denied' ? 'Permission Denied' : 'Signal Unavailable'})`;
     
-    const message = `🚨 [EMERGENCY SOS] DriveSafe AI Alert for driver. Location: ${speedData.locationName || 'Highway'} (${lat.toFixed(4)}, ${lon.toFixed(4)}) Map: ${mapsUrl}`;
+    const message = `🚨 [EMERGENCY SOS] DriveSafe AI Alert for driver. Location: ${locationInfo} Map: ${mapsUrl}`;
 
     window.location.href = `sms:${rawDigits}?body=${encodeURIComponent(message)}`;
   };
@@ -391,21 +445,59 @@ Please check on the driver immediately!`;
           </div>
         </div>
 
-        {/* Big Emergency SOS Dispatch Button */}
+        {/* Big Emergency SOS Dispatch Button & Confirmation Safeguard */}
         <div className="mb-3">
-          <button
-            onClick={handleTriggerManualSOS}
-            disabled={isSosActive}
-            id="btn-trigger-sos"
-            className={`w-full py-3.5 px-4 rounded-xl font-black text-white text-sm sm:text-base tracking-wider uppercase flex items-center justify-center gap-2 shadow-xl transition-all backdrop-blur-md ${
-              isSosActive
-                ? 'bg-rose-700 animate-ping'
-                : 'bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 hover:from-rose-500 hover:to-red-500 shadow-rose-950/60 border border-rose-400/50 active:scale-[0.98]'
-            }`}
-          >
-            <PhoneCall className="w-5 h-5 animate-bounce text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]" />
-            <span>{isSosActive ? "DISPATCHING LOCATION-AWARE SOS..." : "TRIGGER EMERGENCY SOS"}</span>
-          </button>
+          {isConfirmingSos ? (
+            <div className="p-4 rounded-2xl bg-red-950/80 border-2 border-red-500 shadow-2xl shadow-red-950 text-center flex flex-col items-center gap-3 animate-in fade-in zoom-in-95">
+              <div className="flex items-center gap-2 text-rose-300 font-black text-sm uppercase tracking-wider">
+                <ShieldAlert className="w-5 h-5 text-rose-400 animate-bounce" />
+                <span>CONFIRM EMERGENCY DISTRESS BROADCAST</span>
+              </div>
+              <p className="text-xs text-slate-300">
+                Live GPS telematics & location SMS will dispatch to emergency contacts in:
+              </p>
+
+              <div className="w-14 h-14 rounded-full border-4 border-rose-500 flex items-center justify-center font-mono font-black text-2xl text-rose-300 animate-pulse bg-red-900/40">
+                {sosCountdown}s
+              </div>
+
+              <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2 mt-1">
+                <button
+                  onClick={handleConfirmDispatch}
+                  className="w-full py-2.5 px-3 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-lg shadow-red-900/50"
+                >
+                  <PhoneCall className="w-4 h-4" />
+                  <span>Dispatch Now</span>
+                </button>
+
+                <button
+                  onClick={handleCancelSOS}
+                  className="w-full py-2.5 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-white/20 text-slate-200 hover:text-white font-bold text-xs"
+                >
+                  Cancel (False Alarm)
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={handleInitiateSOS}
+              disabled={isSosActive}
+              id="btn-trigger-sos"
+              className={`w-full py-3.5 px-4 rounded-xl font-black text-white text-sm sm:text-base tracking-wider uppercase flex flex-col items-center justify-center gap-0.5 shadow-xl transition-all backdrop-blur-md ${
+                isSosActive
+                  ? 'bg-rose-700 animate-ping'
+                  : 'bg-gradient-to-r from-rose-600 via-red-600 to-rose-700 hover:from-rose-500 hover:to-red-500 shadow-rose-950/60 border border-rose-400/50 active:scale-[0.98]'
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <PhoneCall className="w-5 h-5 animate-bounce text-white drop-shadow-[0_0_8px_rgba(255,255,255,0.8)]" />
+                <span>{isSosActive ? "DISPATCHING LOCATION-AWARE SOS..." : "TRIGGER EMERGENCY SOS"}</span>
+              </div>
+              <span className="text-[10px] font-mono lowercase tracking-normal text-rose-200">
+                (press to open 5s confirmation • prevents accidental triggers)
+              </span>
+            </button>
+          )}
 
           {/* Auto-Trigger and Cooldown Status Bar */}
           <div className="mt-2 flex items-center justify-between px-2 py-1 bg-slate-900/60 rounded-lg border border-white/5 text-[11px]">
