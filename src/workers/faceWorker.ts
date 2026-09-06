@@ -62,6 +62,8 @@ export interface FaceWorkerOutput {
     consecutiveClosedFrames: number;
     consecutiveYawnFrames: number;
     consecutiveDistractedFrames: number;
+    isLowLight?: boolean;
+    avgLuminance?: number;
   };
   potentialSafetyEvent: PotentialSafetyEventType | null;
 }
@@ -420,6 +422,8 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
       consecutiveClosedFrames,
       consecutiveYawnFrames,
       consecutiveDistractedFrames,
+      isLowLight: avgLuminance < 28,
+      avgLuminance: Math.round(avgLuminance),
     },
     potentialSafetyEvent,
   };

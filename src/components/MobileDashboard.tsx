@@ -7,6 +7,8 @@ import { motion, AnimatePresence } from 'motion/react';
 import { DriverState, SpeedData, CabinLightConfig, EmergencyContact } from '../types';
 import { CameraHUD } from './CameraHUD';
 import { soundManager } from '../utils/audio';
+import { useHarshDrivingDetector } from '../hooks/useHarshDrivingDetector';
+import { calculateSafetyRating } from '../utils/safetyRatingCalculator';
 
 interface MobileDashboardProps {
   driverState: DriverState;
@@ -45,7 +47,7 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
   // Fatigue Level Mapping (Strictly LOW, MODERATE, HIGH)
   type FatigueLevel = 'LOW' | 'MODERATE' | 'HIGH';
 
-  const getFatigueState = (): { level: FatigueLevel; emoji: string; text: string; color: string; bg: string; border: string } => {
+  const getFatigueState = (): { level: FatigueLevel; text: string; color: string; bg: string; border: string; dot: string } => {
     if (
       driverState.alertLevel === 'RED' ||
       driverState.eyesClosed ||
@@ -54,11 +56,11 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
     ) {
       return {
         level: 'HIGH',
-        emoji: '🔴',
         text: 'HIGH',
         color: 'text-red-400',
         bg: 'bg-red-500/20',
         border: 'border-red-500/50',
+        dot: 'bg-red-400 animate-ping',
       };
     }
     if (
@@ -69,36 +71,45 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
     ) {
       return {
         level: 'MODERATE',
-        emoji: '🟡',
         text: 'MODERATE',
         color: 'text-amber-400',
         bg: 'bg-amber-500/20',
         border: 'border-amber-500/50',
+        dot: 'bg-amber-400 animate-pulse',
       };
     }
     return {
       level: 'LOW',
-      emoji: '🟢',
       text: 'LOW',
       color: 'text-emerald-400',
       bg: 'bg-emerald-500/20',
       border: 'border-emerald-500/50',
+      dot: 'bg-emerald-400',
     };
   };
 
   const fatigue = getFatigueState();
   const isHighFatigue = fatigue.level === 'HIGH';
 
-  // Calculate Overall Driving Safety Score (0-100) with High Fatigue penalty
-  const baseScore = 100;
-  const highFatiguePenalty = isHighFatigue ? 35 : fatigue.level === 'MODERATE' ? 12 : 0;
-  const deductions =
-    (driverState.microSleepCount * 15) +
-    (driverState.yawnCount * 5) +
-    (driverState.distractionCount * 8) +
-    highFatiguePenalty;
-  const calculatedScore = Math.max(10, Math.min(100, baseScore - deductions));
-  const safetyScore = driverState.safetyScore !== undefined ? Math.min(driverState.safetyScore, calculatedScore) : calculatedScore;
+  // Harsh driving detector hook
+  const { harshEventsCount } = useHarshDrivingDetector(speedData, isMonitoring);
+  const [driveDurationSeconds, setDriveDurationSeconds] = useState(0);
+
+  useEffect(() => {
+    let t: any = null;
+    if (isMonitoring) {
+      t = setInterval(() => setDriveDurationSeconds(s => s + 1), 1000);
+    }
+    return () => clearInterval(t);
+  }, [isMonitoring]);
+
+  // Real-time Driver Safety Rating calculated purely from active valid signals
+  const ratingResult = calculateSafetyRating({
+    driverState,
+    speedData,
+    drivingDurationSeconds: driveDurationSeconds,
+    harshEventsCount,
+  });
 
   // Audio and Speech Warning when Fatigue reaches HIGH
   const prevFatigueLevelRef = React.useRef<FatigueLevel>(fatigue.level);
@@ -140,7 +151,7 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
     if (speedData.gpsStatus === 'active') {
       return { label: 'ACTIVE', color: 'text-emerald-400', dot: 'bg-emerald-400 animate-pulse' };
     }
-    if (speedData.gpsStatus === 'searching' || speedData.gpsStatus === 'prompt') {
+    if (speedData.gpsStatus === 'loading') {
       return { label: 'SEARCHING', color: 'text-amber-400', dot: 'bg-amber-400 animate-ping' };
     }
     return { label: 'OFFLINE', color: 'text-slate-400', dot: 'bg-slate-500' };
@@ -316,10 +327,9 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
             exit={{ opacity: 0, y: -8 }}
             className="rounded-2xl bg-red-600/30 border-2 border-red-500 p-3.5 shadow-[0_0_35px_rgba(239,68,68,0.5)] backdrop-blur-xl flex flex-col items-center text-center animate-pulse"
           >
-            <div className="flex items-center gap-2 text-red-300 font-black text-sm uppercase tracking-wider mb-1">
-              <span className="text-xl animate-bounce">🛑</span>
-              <span>TAKE A BREAK IMMEDIATELY</span>
-              <span className="text-xl animate-bounce">🛑</span>
+            <div className="flex items-center gap-2 text-red-300 font-bold text-xs uppercase tracking-wider mb-1">
+              <AlertTriangle className="w-4 h-4 text-red-400 shrink-0" />
+              <span>INTERVENTION REQUIRED: PULL OVER SAFELY</span>
             </div>
             <p className="text-xs text-white font-semibold">
               High fatigue detected! Pull over at the nearest safe rest area.
@@ -390,9 +400,9 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
             FATIGUE
           </div>
 
-          {/* Explicit 🟢 LOW / 🟡 MODERATE / 🔴 HIGH display */}
-          <div className="my-1 flex items-center justify-center gap-1.5">
-            <span className="text-2xl">{fatigue.emoji}</span>
+          {/* Explicit LOW / MODERATE / HIGH display */}
+          <div className="my-1 flex items-center justify-center gap-2">
+            <span className={`w-2.5 h-2.5 rounded-full ${fatigue.dot}`} />
             <span className={`text-2xl sm:text-3xl font-black tracking-wide ${fatigue.color}`}>
               {fatigue.text}
             </span>
@@ -416,43 +426,33 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
         id="mobile-safety-score-card"
         className="rounded-2xl bg-white/5 border border-white/10 p-4 backdrop-blur-xl shadow-xl flex flex-col items-center justify-center text-center"
       >
-        <div className="text-[11px] font-mono font-bold tracking-[0.2em] text-slate-400 uppercase mb-1">
-          SAFETY SCORE
+        <div className="text-[10px] font-mono font-bold tracking-[0.2em] text-slate-400 uppercase mb-1">
+          DRIVING SAFETY RATING
         </div>
 
-        <div className="my-1 flex items-baseline justify-center gap-1">
-          <span className={`text-4xl sm:text-5xl font-black font-mono tracking-tight ${
-            isHighFatigue ? 'text-red-400' : 'text-white'
-          }`}>
-            {safetyScore}
+        {/* Clear Score: "87 / 100" */}
+        <div className="my-1 flex items-baseline justify-center gap-1.5">
+          <span className={`text-4xl sm:text-5xl font-black font-mono tracking-tight ${ratingResult.tierColor}`}>
+            {ratingResult.score}
           </span>
-          <span className="text-base sm:text-lg font-mono font-bold text-slate-400">
-            /100
+          <span className="text-xl sm:text-2xl font-mono font-bold text-slate-400">
+            / 100
           </span>
         </div>
 
-        {/* Status Badge */}
-        <div className="mt-1 flex items-center gap-2">
-          {safetyScore >= 80 ? (
-            <span className="text-xs font-bold text-emerald-400 px-3 py-0.5 rounded-full bg-emerald-500/15 border border-emerald-500/30">
-              EXCELLENT
-            </span>
-          ) : safetyScore >= 60 ? (
-            <span className="text-xs font-bold text-amber-400 px-3 py-0.5 rounded-full bg-amber-500/15 border border-amber-500/30">
-              MODERATE RISK
-            </span>
-          ) : (
-            <span className="text-xs font-bold text-red-400 px-3 py-0.5 rounded-full bg-red-500/20 border border-red-500/30 animate-pulse">
-              HIGH RISK
-            </span>
-          )}
+        {/* Clear Tier: "SAFE DRIVING" / "MODERATE RISK" / "HIGH RISK" */}
+        <div className={`mt-1.5 px-3.5 py-1 rounded-full font-black text-xs tracking-wider uppercase border ${ratingResult.tierBg} ${ratingResult.tierBorder} ${ratingResult.tierColor} ${ratingResult.badgeGlow}`}>
+          {ratingResult.tier}
+        </div>
 
+        <div className="mt-2.5 flex items-center justify-center gap-2 text-[10px] font-mono text-slate-400">
+          <span>Based on {ratingResult.availableFactorsCount} verified signals</span>
           {onOpenScorecard && (
             <button
               onClick={onOpenScorecard}
               className="text-[11px] text-sky-400 hover:text-sky-300 underline font-medium"
             >
-              Details
+              Signal Breakdown
             </button>
           )}
         </div>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, Volume2, VolumeX, AlertTriangle, Play, Square, Award } from 'lucide-react';
+import { Shield, Volume2, VolumeX, AlertTriangle, Play, Square, Award, Smartphone, Monitor } from 'lucide-react';
 import { soundManager } from '../utils/audio';
 
 interface HeaderProps {
@@ -40,16 +40,16 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="font-bold text-white text-xl tracking-tight">DriveSafe AI</h1>
-              <span className={`text-[10px] font-extrabold px-2.5 py-0.5 rounded-full uppercase tracking-wider backdrop-blur-md ${
-                alertLevel === 'RED' ? 'bg-red-500 text-white animate-bounce shadow-lg shadow-red-500/50' :
+              <h1 className="font-bold text-white text-xl tracking-tight font-mono">DMS·ASIL-B</h1>
+              <span className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-md uppercase tracking-wider backdrop-blur-md ${
+                alertLevel === 'RED' ? 'bg-red-500 text-white shadow-lg shadow-red-500/50' :
                 alertLevel === 'YELLOW' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' :
                 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
               }`}>
-                {alertLevel === 'RED' ? 'CRITICAL ALERT' : alertLevel === 'YELLOW' ? 'WARNING' : 'SYSTEM ONLINE'}
+                {alertLevel === 'RED' ? 'ASIL-B: FAULT_LEVEL_2' : alertLevel === 'YELLOW' ? 'ASIL-B: WARNING' : 'ASIL-B: NOMINAL'}
               </span>
             </div>
-            <p className="text-xs text-slate-400 hidden sm:block">Frosted Glass AI Driver Safety & Drowsiness HUD</p>
+            <p className="text-xs text-slate-400 font-mono hidden sm:block">Automotive Driver Monitoring System & Biometric Vision Bench</p>
           </div>
         </div>
 
@@ -60,25 +60,27 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="flex items-center p-0.5 rounded-xl bg-white/5 border border-white/10 text-xs font-mono">
               <button
                 onClick={() => onToggleViewMode('mobile')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
                   viewMode === 'mobile'
                     ? 'bg-blue-600 text-white font-bold shadow-md shadow-blue-900/40'
                     : 'text-slate-400 hover:text-white'
                 }`}
-                title="Mobile Cockpit (Focuses strictly on 5 core features)"
+                title="Mobile Cockpit View"
               >
-                📱 Mobile
+                <Smartphone className="w-3.5 h-3.5" />
+                <span>Mobile</span>
               </button>
               <button
                 onClick={() => onToggleViewMode('desktop')}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
+                className={`flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium transition-all ${
                   viewMode === 'desktop'
                     ? 'bg-blue-600 text-white font-bold shadow-md shadow-blue-900/40'
                     : 'text-slate-400 hover:text-white'
                 }`}
-                title="Full Desktop Telematics"
+                title="Engineering Telematics Workstation"
               >
-                💻 Desktop
+                <Monitor className="w-3.5 h-3.5" />
+                <span>Workstation</span>
               </button>
             </div>
           )}

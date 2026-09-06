@@ -12,12 +12,13 @@ import { CircadianPredictor } from './components/CircadianPredictor';
 import { IncidentRecorder } from './components/IncidentRecorder';
 import { TripScorecard } from './components/TripScorecard';
 import { AndroidExportModal } from './components/AndroidExportModal';
-import { MobileLiveSpeedCard } from './components/MobileLiveSpeedCard';
 import { MobileDashboard } from './components/MobileDashboard';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { DriverState, SpeedData } from './types';
 import { soundManager } from './utils/audio';
 import { useGpsTracker } from './hooks/useGpsTracker';
 import { useCabinLighting } from './hooks/useCabinLighting';
+import { useHarshDrivingDetector } from './hooks/useHarshDrivingDetector';
 
 export default function App() {
   const gps = useGpsTracker();
@@ -119,6 +120,9 @@ export default function App() {
   // Cabin Lighting State & Vehicle Hardware Architecture
   const cabinLight = useCabinLighting(driverState);
 
+  // Real-time Harsh Driving Event Detection (Accelerometer + GPS)
+  const { harshEventsCount } = useHarshDrivingDetector(speedData, driverState.isMonitoring);
+
   const handleToggleMonitoring = (forceState?: boolean) => {
     soundManager.unlockAudioContext();
     setDriverState(prev => {
@@ -159,19 +163,21 @@ export default function App() {
       {/* View Switch: Focused Mobile UI vs Full Desktop Telematics */}
       {activeView === 'mobile' ? (
         <div className="relative z-10 flex-1 flex flex-col justify-between py-2">
-          <MobileDashboard
-            driverState={driverState}
-            setDriverState={setDriverState}
-            speedData={speedData}
-            cabinLightConfig={cabinLight.config}
-            isMonitoring={driverState.isMonitoring}
-            onToggleMonitoring={handleToggleMonitoring}
-            isMuted={isMuted}
-            onToggleMute={handleToggleMute}
-            onSwitchToDesktopView={() => setViewMode('desktop')}
-            onOpenScorecard={() => setIsScorecardOpen(true)}
-            onRetryGps={gps.retryGps}
-          />
+          <ErrorBoundary fallbackTitle="Mobile Safety Cockpit">
+            <MobileDashboard
+              driverState={driverState}
+              setDriverState={setDriverState}
+              speedData={speedData}
+              cabinLightConfig={cabinLight.config}
+              isMonitoring={driverState.isMonitoring}
+              onToggleMonitoring={handleToggleMonitoring}
+              isMuted={isMuted}
+              onToggleMute={handleToggleMute}
+              onSwitchToDesktopView={() => setViewMode('desktop')}
+              onOpenScorecard={() => setIsScorecardOpen(true)}
+              onRetryGps={gps.retryGps}
+            />
+          </ErrorBoundary>
 
           {/* Minimal Mobile Utility Navigation */}
           <div className="text-center py-2 text-[11px] text-slate-500 flex items-center justify-center gap-3">
@@ -224,61 +230,62 @@ export default function App() {
               isMuted={isMuted}
             />
 
-            {/* Mobile Experience: Prominently Display Live Vehicle Speed */}
-            <MobileLiveSpeedCard
-              speedData={speedData}
-              setSpeedData={setSpeedData}
-              onRetryGps={gps.retryGps}
-              isManualOverride={gps.isManualOverride}
-              onToggleManualOverride={gps.setIsManualOverride}
-              manualSpeedKmh={gps.manualSpeedKmh}
-              onSetManualSpeed={gps.setManualSpeedKmh}
-              cabinLightConfig={cabinLight.config}
-              onToggleCabinPower={cabinLight.togglePower}
-            />
-
-            {/* Top Section: Camera Vision & Speedometer HUD */}
+            {/* Top Section: Camera Vision & Speedometer HUD (Camera Visually Dominates) */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {/* Driver Camera AI Monitor (Takes 2 columns on lg) */}
               <div className="lg:col-span-2">
-                <CameraHUD
-                  driverState={driverState}
-                  setDriverState={setDriverState}
-                  isMonitoring={driverState.isMonitoring}
-                />
+                <ErrorBoundary fallbackTitle="Driver Safety Vision System">
+                  <CameraHUD
+                    driverState={driverState}
+                    setDriverState={setDriverState}
+                    isMonitoring={driverState.isMonitoring}
+                  />
+                </ErrorBoundary>
               </div>
 
               {/* Speedometer & GPS HUD (Desktop & Tablet) */}
               <div className="hidden md:flex lg:col-span-1">
-                <Speedometer
-                  speedData={speedData}
-                  setSpeedData={setSpeedData}
-                  isMonitoring={driverState.isMonitoring}
-                  onRetryGps={gps.retryGps}
-                  isManualOverride={gps.isManualOverride}
-                  onToggleManualOverride={gps.setIsManualOverride}
-                  manualSpeedKmh={gps.manualSpeedKmh}
-                  onSetManualSpeed={gps.setManualSpeedKmh}
-                />
+                <ErrorBoundary fallbackTitle="Vehicle Speed & GPS Telematics">
+                  <Speedometer
+                    speedData={speedData}
+                    setSpeedData={setSpeedData}
+                    isMonitoring={driverState.isMonitoring}
+                    onRetryGps={gps.retryGps}
+                    isManualOverride={gps.isManualOverride}
+                    onToggleManualOverride={gps.setIsManualOverride}
+                    manualSpeedKmh={gps.manualSpeedKmh}
+                    onSetManualSpeed={gps.setManualSpeedKmh}
+                  />
+                </ErrorBoundary>
               </div>
             </div>
 
             {/* Middle Section: Fatigue Metrics, Emergency SOS, Trip Log */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              <SafetyMetrics
-                driverState={driverState}
-                isMonitoring={driverState.isMonitoring}
-              />
-              <EmergencySOS
-                speedData={speedData}
-                driverState={driverState}
-              />
-              <TripTracker
-                speedData={speedData}
-                driverState={driverState}
-                isMonitoring={driverState.isMonitoring}
-                onRetryGps={gps.retryGps}
-              />
+              <ErrorBoundary fallbackTitle="Driver Safety Rating">
+                <SafetyMetrics
+                  driverState={driverState}
+                  speedData={speedData}
+                  isMonitoring={driverState.isMonitoring}
+                  harshEventsCount={harshEventsCount}
+                />
+              </ErrorBoundary>
+
+              <ErrorBoundary fallbackTitle="Emergency Response Protocol">
+                <EmergencySOS
+                  speedData={speedData}
+                  driverState={driverState}
+                />
+              </ErrorBoundary>
+
+              <ErrorBoundary fallbackTitle="Trip Log & Statistics">
+                <TripTracker
+                  speedData={speedData}
+                  driverState={driverState}
+                  isMonitoring={driverState.isMonitoring}
+                  onRetryGps={gps.retryGps}
+                />
+              </ErrorBoundary>
             </div>
 
             {/* New Feature Section: Smart Rest Stop & Route Navigator + Ambient Cabin Light */}

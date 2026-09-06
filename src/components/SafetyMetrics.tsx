@@ -62,41 +62,39 @@ export const SafetyMetrics: React.FC<SafetyMetricsProps> = ({
      driverState.yawnCount > 0);
 
   const fatigueState = isHighFatigue
-    ? { level: 'HIGH', emoji: '🔴', color: 'text-red-400', badge: 'bg-red-500/20 text-red-300 border-red-500/50' }
+    ? { level: 'HIGH', color: 'text-red-400', badge: 'bg-red-500/15 text-red-300 border-red-500/40' }
     : isModerateFatigue
-    ? { level: 'MODERATE', emoji: '🟡', color: 'text-amber-400', badge: 'bg-amber-500/20 text-amber-300 border-amber-500/50' }
-    : { level: 'LOW', emoji: '🟢', color: 'text-emerald-400', badge: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50' };
+    ? { level: 'MODERATE', color: 'text-amber-400', badge: 'bg-amber-500/15 text-amber-300 border-amber-500/40' }
+    : { level: 'LOW', color: 'text-emerald-400', badge: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40' };
 
   return (
-    <div className="backdrop-blur-xl bg-slate-900/80 border border-white/10 rounded-2xl p-4 shadow-2xl flex flex-col justify-between h-full">
+    <div className="backdrop-blur-xl bg-slate-900/80 border border-white/10 rounded-2xl p-4 shadow-2xl flex flex-col justify-between h-full font-mono">
       {/* Top Header: Title & Fatigue Status Badge */}
       <div className="flex items-center justify-between border-b border-white/10 pb-2.5 mb-3">
         <div className="flex items-center gap-2">
-          <div className="p-1.5 bg-blue-500/20 rounded-lg border border-blue-400/30 text-blue-400">
+          <div className="p-1.5 bg-blue-500/20 rounded border border-blue-400/30 text-blue-400">
             <ShieldCheck className="w-4 h-4" />
           </div>
-          <span className="text-white font-bold text-sm tracking-wide">DRIVING SAFETY RATING</span>
+          <span className="text-white font-bold text-xs tracking-wider uppercase font-sans">DRIVING SAFETY RATING</span>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Explicit 🟢 LOW / 🟡 MODERATE / 🔴 HIGH Badge */}
-          <span className={`text-xs font-mono font-bold px-2.5 py-0.5 rounded-full border flex items-center gap-1.5 ${fatigueState.badge}`}>
-            <span>{fatigueState.emoji}</span>
-            <span>{fatigueState.level}</span>
+          <span className={`text-[10px] font-mono font-bold px-2.5 py-0.5 rounded border flex items-center gap-1.5 ${fatigueState.badge}`}>
+            <span className="w-1.5 h-1.5 rounded-full bg-current" />
+            <span>FATIGUE: {fatigueState.level}</span>
           </span>
         </div>
       </div>
 
       {/* Emergency Flash Banner if High Fatigue */}
       {isHighFatigue && (
-        <div className="mb-3 p-2.5 rounded-xl bg-red-600/30 border border-red-500 text-center shadow-[0_0_20px_rgba(239,68,68,0.4)]">
-          <div className="flex items-center justify-center gap-2 text-xs font-black text-white uppercase tracking-wider">
-            <span>🛑</span>
-            <span>TAKE A BREAK IMMEDIATELY</span>
-            <span>🛑</span>
+        <div className="mb-3 p-2 rounded bg-red-600/20 border border-red-500 text-center shadow-[0_0_20px_rgba(239,68,68,0.25)]">
+          <div className="flex items-center justify-center gap-2 text-xs font-bold text-red-300 uppercase tracking-wider">
+            <AlertTriangle className="w-4 h-4 text-red-400" />
+            <span>INTERVENTION REQUIRED: PULL OVER SAFELY</span>
           </div>
-          <p className="text-[11px] text-red-200 mt-0.5">
-            High fatigue detected. Please pull over at the nearest safe rest area.
+          <p className="text-[10px] text-red-200 mt-0.5">
+            ASIL-B critical fatigue threshold exceeded. Rest stop waypoint recommended.
           </p>
         </div>
       )}

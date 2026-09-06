@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   PhoneCall, MapPin, Plus, Trash2, Send, AlertTriangle, ShieldAlert, 
   CheckCircle2, MessageSquare, ExternalLink, Sparkles, PhoneForwarded,
-  Radio, Clock, Settings, FileText, Check, ChevronDown, ChevronUp, RefreshCw, Zap
+  Radio, Clock, Settings, FileText, Check, ChevronDown, ChevronUp, RefreshCw, Zap,
+  PhoneOutgoing
 } from 'lucide-react';
 import { EmergencyContact, SpeedData, DriverState, SMSDispatchLog, SMSGatewayConfig } from '../types';
 import { soundManager } from '../utils/audio';
@@ -107,6 +108,35 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverSta
   const lastDispatchTimeRef = useRef<number>(0);
   const prevMicroSleepCountRef = useRef<number>(driverState?.microSleepCount || 0);
   const prevAlertLevelRef = useRef<string>(driverState?.alertLevel || 'GREEN');
+
+  // Auto-trigger Call configuration & state (Critical drowsiness > 5s)
+  const [autoTriggerEnabled, setAutoTriggerEnabled] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem('drivesafe_sos_autotrigger');
+      return saved !== null ? saved === 'true' : true;
+    } catch {
+      return true;
+    }
+  });
+
+  const [criticalThreshold, setCriticalThreshold] = useState<number>(80);
+  const [criticalSustainedSeconds, setCriticalSustainedSeconds] = useState<number>(0);
+  const [isAutoCallActive, setIsAutoCallActive] = useState<boolean>(false);
+  const [activeCallContact, setActiveCallContact] = useState<EmergencyContact | null>(null);
+  const [autoCallInitiatedAt, setAutoCallInitiatedAt] = useState<string | null>(null);
+  const [isSimulatedCritical, setIsSimulatedCritical] = useState<boolean>(false);
+
+  const criticalDrowsyStartTimeRef = useRef<number | null>(null);
+  const lastAutoCallTimeRef = useRef<number>(0);
+
+  // Persist Auto-trigger toggle state to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('drivesafe_sos_autotrigger', String(autoTriggerEnabled));
+    } catch (e) {
+      console.warn("Could not save autotrigger preference", e);
+    }
+  }, [autoTriggerEnabled]);
 
   // Automated banner when new Indian contact is added
   const [automatedTextNotice, setAutomatedTextNotice] = useState<{
@@ -256,6 +286,108 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverSta
     prevMicroSleepCountRef.current = driverState.microSleepCount;
     prevAlertLevelRef.current = driverState.alertLevel;
   }, [driverState?.alertLevel, driverState?.microSleepCount, driverState?.drowsinessLevel, driverState?.eyesClosed, driverState?.isMonitoring]);
+
+  // Core Service: Auto-trigger SOS Call when critical threshold is sustained > 5 seconds
+  const handleAutoTriggerSOSCall = (drowsinessVal: number) => {
+    soundManager.unlockAudioContext();
+    soundManager.playCriticalAlarm();
+    soundManager.speakText(
+      "Critical warning: Driver drowsiness sustained above critical threshold for more than five seconds. Automatically initiating emergency SOS call.",
+      true
+    );
+
+    const primary = contacts.find(c => c.isPrimary) || contacts[0] || {
+      id: 'emergency_112',
+      name: 'National Emergency Helpline',
+      phone: '112',
+      relationship: 'National Emergency Services',
+      isPrimary: true,
+    };
+
+    setActiveCallContact(primary);
+    setIsAutoCallActive(true);
+    setAutoCallInitiatedAt(new Date().toLocaleTimeString());
+
+    // Trigger direct phone dialer
+    try {
+      const cleanDigits = primary.phone.replace(/[\s\-\(\)]/g, '');
+      window.location.href = `tel:${cleanDigits}`;
+    } catch (e) {
+      console.warn("Could not launch phone tel: link directly", e);
+    }
+
+    // Auto-dispatch critical emergency location packet via SMS Gateway
+    dispatchSMSViaGateway(
+      contacts,
+      `AUTOMATED EMERGENCY SOS CALL: Critical driver drowsiness (${drowsinessVal}%) sustained > 5.0s`,
+      false
+    );
+  };
+
+  const handleCancelCriticalTimer = () => {
+    criticalDrowsyStartTimeRef.current = Date.now() + 10000; // 10s grace pause
+    setCriticalSustainedSeconds(0);
+    setIsSimulatedCritical(false);
+    soundManager.speakText("Auto-trigger paused for 10 seconds. Driver acknowledged.", true);
+  };
+
+  // High-frequency monitor for continuous critical drowsiness (> 5 seconds)
+  useEffect(() => {
+    if (!autoTriggerEnabled || (!driverState?.isMonitoring && !isSimulatedCritical)) {
+      criticalDrowsyStartTimeRef.current = null;
+      setCriticalSustainedSeconds(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const isCritical =
+        isSimulatedCritical ||
+        (driverState &&
+          (driverState.drowsinessLevel >= criticalThreshold ||
+            driverState.alertLevel === 'RED' ||
+            (driverState.eyesClosed && driverState.drowsinessLevel >= 70)));
+
+      const now = Date.now();
+
+      if (isCritical) {
+        if (!criticalDrowsyStartTimeRef.current) {
+          criticalDrowsyStartTimeRef.current = now;
+        }
+
+        const elapsedMs = now - criticalDrowsyStartTimeRef.current;
+        const elapsedSec = Math.min(5, elapsedMs / 1000);
+        setCriticalSustainedSeconds(elapsedSec);
+
+        // Check if exceeded 5 continuous seconds (5000ms)
+        if (elapsedMs >= 5000) {
+          // Cooldown check (don't re-trigger within 30s)
+          if (now - lastAutoCallTimeRef.current > 30000 && !isAutoCallActive) {
+            lastAutoCallTimeRef.current = now;
+            const drowsyVal = isSimulatedCritical ? 88 : (driverState?.drowsinessLevel || 85);
+            handleAutoTriggerSOSCall(drowsyVal);
+            setIsSimulatedCritical(false);
+          }
+          criticalDrowsyStartTimeRef.current = null;
+          setCriticalSustainedSeconds(0);
+        }
+      } else {
+        // Driver recovered or drowsiness dropped below threshold
+        criticalDrowsyStartTimeRef.current = null;
+        setCriticalSustainedSeconds(0);
+      }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [
+    autoTriggerEnabled,
+    driverState?.drowsinessLevel,
+    driverState?.alertLevel,
+    driverState?.eyesClosed,
+    driverState?.isMonitoring,
+    criticalThreshold,
+    isAutoCallActive,
+    isSimulatedCritical,
+  ]);
 
   const handleAddContact = (e: React.FormEvent) => {
     e.preventDefault();
@@ -445,6 +577,96 @@ Please check on the driver immediately!`;
           </div>
         </div>
 
+        {/* Auto-trigger SOS Call Control Card (Critical Drowsiness > 5s) */}
+        <div className="mb-3 p-3 rounded-xl bg-slate-900/90 border border-slate-700/80 shadow-lg">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <div className={`p-2 rounded-lg border transition-colors ${
+                autoTriggerEnabled 
+                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400' 
+                  : 'bg-slate-800 border-slate-700 text-slate-400'
+              }`}>
+                <PhoneOutgoing className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-bold text-slate-100 uppercase tracking-wide">
+                    Auto-trigger
+                  </span>
+                  <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded border transition-colors ${
+                    autoTriggerEnabled 
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300' 
+                      : 'bg-slate-800 border-slate-700 text-slate-400'
+                  }`}>
+                    {autoTriggerEnabled ? 'ENABLED (5s THRESHOLD)' : 'DISABLED'}
+                  </span>
+                </div>
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  Automatically initiates SOS call if drowsiness &ge;{criticalThreshold}% persists for &gt;5 seconds.
+                </p>
+              </div>
+            </div>
+
+            {/* Dedicated Auto-trigger Toggle Switch */}
+            <button
+              type="button"
+              id="btn-toggle-autotrigger"
+              onClick={() => {
+                const nextVal = !autoTriggerEnabled;
+                setAutoTriggerEnabled(nextVal);
+                soundManager.speakText(`Auto-trigger emergency SOS call ${nextVal ? 'enabled' : 'disabled'}.`);
+              }}
+              className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                autoTriggerEnabled ? 'bg-emerald-500' : 'bg-slate-700'
+              }`}
+              role="switch"
+              aria-checked={autoTriggerEnabled}
+              title="Toggle Auto-trigger SOS Call"
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                  autoTriggerEnabled ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
+
+          {/* Real-time 5-Second Sustained Critical Drowsiness Progress Monitor */}
+          {autoTriggerEnabled && criticalSustainedSeconds > 0 && (
+            <div className="mt-2.5 p-2.5 rounded-lg bg-red-950/90 border border-red-500/60 animate-in fade-in">
+              <div className="flex items-center justify-between text-[11px] mb-1.5">
+                <div className="flex items-center gap-1.5 text-red-300 font-bold">
+                  <AlertTriangle className="w-3.5 h-3.5 text-red-400 animate-bounce" />
+                  <span>CRITICAL DROWSINESS DETECTED ({isSimulatedCritical ? 88 : (driverState?.drowsinessLevel || 85)}%)</span>
+                </div>
+                <span className="font-mono text-xs text-red-200 font-bold">
+                  {criticalSustainedSeconds.toFixed(1)}s / 5.0s
+                </span>
+              </div>
+
+              {/* Progress bar filling up to 5 seconds */}
+              <div className="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-red-500/40">
+                <div
+                  className="bg-gradient-to-r from-amber-500 to-red-500 h-full transition-all duration-100 ease-linear rounded-full"
+                  style={{ width: `${Math.min(100, (criticalSustainedSeconds / 5) * 100)}%` }}
+                />
+              </div>
+
+              <div className="flex items-center justify-between mt-2 text-[10px]">
+                <span className="text-amber-300 font-medium">
+                  Auto-call initiating in {(Math.max(0, 5 - criticalSustainedSeconds)).toFixed(1)}s...
+                </span>
+                <button
+                  onClick={handleCancelCriticalTimer}
+                  className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 font-medium active:scale-95 transition-all"
+                >
+                  Cancel (I'm Attentive)
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Big Emergency SOS Dispatch Button & Confirmation Safeguard */}
         <div className="mb-3">
           {isConfirmingSos ? (
@@ -583,6 +805,47 @@ Please check on the driver immediately!`;
               >
                 <Zap className="w-3 h-3 text-amber-300" /> Test SMS Delivery
               </button>
+            </div>
+
+            {/* Auto-Trigger Threshold & Test Simulator */}
+            <div className="pt-2 border-t border-white/10 space-y-2">
+              <div className="flex items-center justify-between text-[11px] flex-wrap gap-2">
+                <span className="text-slate-300">Auto-trigger Critical Drowsiness Threshold:</span>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="range"
+                    min={70}
+                    max={95}
+                    step={1}
+                    value={criticalThreshold}
+                    onChange={(e) => setCriticalThreshold(Number(e.target.value))}
+                    className="accent-red-500 h-1 bg-slate-800 rounded cursor-pointer w-24"
+                  />
+                  <span className="font-mono text-red-400 font-bold">{criticalThreshold}%</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <span className="text-[10px] text-slate-400">Test 5-Second Auto-Trigger SOS Call:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (isSimulatedCritical) {
+                      handleCancelCriticalTimer();
+                    } else {
+                      setIsSimulatedCritical(true);
+                      soundManager.speakText("Simulating 5 seconds of critical drowsiness for automated SOS call trigger.", true);
+                    }
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                    isSimulatedCritical
+                      ? 'bg-red-600 text-white border-red-400 animate-pulse'
+                      : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-amber-500/30'
+                  }`}
+                >
+                  {isSimulatedCritical ? 'Abort 5s Test' : 'Run 5s Auto-Trigger Test'}
+                </button>
+              </div>
             </div>
 
             {/* Quick Add Presets for Indian National Emergency Services */}
@@ -865,6 +1128,71 @@ Please check on the driver immediately!`;
           </div>
         </div>
       </div>
+
+      {/* Active Automated SOS Call Modal */}
+      {isAutoCallActive && activeCallContact && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md animate-in fade-in">
+          <div className="w-full max-w-md bg-slate-900 border-2 border-red-500 rounded-2xl p-5 shadow-2xl shadow-red-950/80 text-center flex flex-col items-center">
+            <div className="relative mb-3">
+              <div className="w-20 h-20 rounded-full bg-red-600/30 border-2 border-red-500 flex items-center justify-center animate-ping absolute inset-0" />
+              <div className="w-20 h-20 rounded-full bg-red-600 border-2 border-red-400 flex items-center justify-center relative shadow-lg shadow-red-600/50">
+                <PhoneCall className="w-9 h-9 text-white animate-bounce" />
+              </div>
+            </div>
+
+            <span className="text-[10px] font-mono tracking-widest uppercase text-red-400 bg-red-500/10 px-2.5 py-0.5 rounded-full border border-red-500/30 mb-1 font-bold">
+              AUTO-TRIGGERED EMERGENCY CALL
+            </span>
+
+            <h3 className="text-lg font-black text-white uppercase tracking-wide">
+              Emergency SOS Call In Progress
+            </h3>
+
+            <p className="text-xs text-red-300 mt-1">
+              Initiated automatically after driver drowsiness exceeded critical threshold (≥{criticalThreshold}%) for more than 5 seconds.
+            </p>
+
+            <div className="my-4 p-3.5 rounded-xl bg-slate-950 border border-white/10 w-full text-left font-mono">
+              <div className="flex justify-between items-center text-xs text-slate-300 mb-1">
+                <span className="text-slate-400">Target Contact:</span>
+                <span className="font-bold text-white">{activeCallContact.name}</span>
+              </div>
+              <div className="flex justify-between items-center text-xs text-slate-300 mb-1">
+                <span className="text-slate-400">Phone Number:</span>
+                <span className="font-bold text-sky-400">{activeCallContact.phone}</span>
+              </div>
+              <div className="flex justify-between items-center text-xs text-slate-300 mb-1">
+                <span className="text-slate-400">Relationship:</span>
+                <span className="text-slate-300">{activeCallContact.relationship}</span>
+              </div>
+              <div className="flex justify-between items-center text-xs text-slate-300">
+                <span className="text-slate-400">Time Dispatched:</span>
+                <span className="text-amber-300">{autoCallInitiatedAt}</span>
+              </div>
+            </div>
+
+            <div className="w-full flex flex-col gap-2">
+              <a
+                href={`tel:${activeCallContact.phone.replace(/[\s\-\(\)]/g, '')}`}
+                className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs uppercase tracking-wider flex items-center justify-center gap-2 shadow-lg shadow-emerald-900/40 active:scale-[0.98] transition-all"
+              >
+                <PhoneCall className="w-4 h-4" />
+                <span>Open Phone Dialer ({activeCallContact.phone})</span>
+              </a>
+
+              <button
+                onClick={() => {
+                  setIsAutoCallActive(false);
+                  soundManager.speakText("Emergency call dismissed by driver.");
+                }}
+                className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-white/10 text-xs font-semibold active:scale-[0.98] transition-all"
+              >
+                End Call / Dismiss (False Alarm)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
