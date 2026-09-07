@@ -246,10 +246,10 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
     try {
       const lat = speedData.latitude;
       const lon = speedData.longitude;
-      const hasGps = lat !== null && lon !== null;
-      const locationName = hasGps
-        ? `${speedData.locationName} (${lat?.toFixed(4)}, ${lon?.toFixed(4)})`
-        : `GPS Offline (${speedData.gpsStatus})`;
+      const hasGps = typeof lat === 'number' && typeof lon === 'number' && !isNaN(lat) && !isNaN(lon);
+      const locationName = hasGps && lat !== null && lon !== null
+        ? `${speedData.locationName || 'Unknown Location'} (${lat.toFixed(4)}, ${lon.toFixed(4)})`
+        : `GPS Offline (${speedData.gpsStatus || 'Signal Unavailable'})`;
       const speed = speedData.currentSpeedKmh || 0;
       const contacts = getSavedContacts();
       const primaryContact = contacts[0] || { name: 'Emergency Services', phone: '112' };

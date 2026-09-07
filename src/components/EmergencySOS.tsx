@@ -162,11 +162,12 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverSta
     triggerReason: string,
     isManualTest: boolean = false
   ) => {
-    const hasGps = speedData.latitude !== null && speedData.longitude !== null;
     const lat = speedData.latitude;
     const lon = speedData.longitude;
-    const locationName = hasGps
-      ? `${speedData.locationName} (${lat?.toFixed(4)}, ${lon?.toFixed(4)})`
+    const hasGps = typeof lat === 'number' && typeof lon === 'number' && !isNaN(lat) && !isNaN(lon);
+    const coordsStr = hasGps && lat !== null && lon !== null ? `${lat.toFixed(4)}, ${lon.toFixed(4)}` : 'GPS Offline';
+    const locationName = hasGps && lat !== null && lon !== null
+      ? `${speedData.locationName || 'Unknown Location'} (${lat.toFixed(4)}, ${lon.toFixed(4)})`
       : `Location Unavailable (${speedData.gpsStatus === 'denied' ? 'Permission Denied' : 'GPS Offline'})`;
     const speed = speedData.currentSpeedKmh || speedData.currentSpeed || 0;
     const drowsiness = driverState?.drowsinessLevel || (isManualTest ? 45 : 85);
@@ -212,7 +213,7 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverSta
           status: data.success ? 'DELIVERED' : 'FAILED',
           triggerReason,
           location: locationName,
-          gpsCoords: `${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+          gpsCoords: coordsStr,
           gateway: data.gateway || 'Indian Telecom DLT Route',
           messagePreview: data.dispatchedMessage || `SOS Alert sent to ${contact.name}`,
           messageId: data.messageId || `DLT-IND-${Math.floor(100000 + Math.random() * 900000)}`,
@@ -230,7 +231,7 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverSta
           status: 'FAILED',
           triggerReason,
           location: locationName,
-          gpsCoords: `${lat.toFixed(4)}, ${lon.toFixed(4)}`,
+          gpsCoords: coordsStr,
           gateway: 'Gateway Timeout / Fallback SMS',
           messagePreview: `Alert attempt failed for ${contact.name}`,
           messageId: 'ERR-DLT-TIMEOUT',
@@ -245,8 +246,8 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverSta
     setCooldownRemaining(gatewayConfig.cooldownSeconds);
 
     const messageSummary = isManualTest
-      ? `Test SMS Gateway dispatched to ${contactsToNotify.length} Indian contacts with live GPS coordinates (${lat.toFixed(4)}, ${lon.toFixed(4)})`
-      : `AUTOMATED EMERGENCY SOS: Location-aware SMS dispatched to ${contactsToNotify.length} contacts (${lat.toFixed(4)}, ${lon.toFixed(4)})`;
+      ? `Test SMS Gateway dispatched to ${contactsToNotify.length} Indian contacts ${hasGps ? `with live GPS coordinates (${coordsStr})` : '(GPS Offline)'}`
+      : `AUTOMATED EMERGENCY SOS: Location-aware SMS dispatched to ${contactsToNotify.length} contacts ${hasGps ? `(${coordsStr})` : ''}`;
 
     setSosSentMessage(messageSummary);
 
@@ -409,12 +410,12 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverSta
     // If it's an Indian mobile number, prepare automated emergency SOS text template & auto-dispatch trigger
     if (isIndian) {
       const rawDigits = getRawDigitsForIndianLink(newContactPhone);
-      const hasGps = speedData.latitude !== null && speedData.longitude !== null;
       const lat = speedData.latitude;
       const lon = speedData.longitude;
-      const mapsUrl = hasGps ? `https://maps.google.com/?q=${lat?.toFixed(5)},${lon?.toFixed(5)}` : 'Location unavailable (GPS Offline)';
-      const locationInfo = hasGps
-        ? `${speedData.locationName} (${lat?.toFixed(4)}, ${lon?.toFixed(4)})`
+      const hasGps = typeof lat === 'number' && typeof lon === 'number' && !isNaN(lat) && !isNaN(lon);
+      const mapsUrl = hasGps && lat !== null && lon !== null ? `https://maps.google.com/?q=${lat.toFixed(5)},${lon.toFixed(5)}` : 'Location unavailable (GPS Offline)';
+      const locationInfo = hasGps && lat !== null && lon !== null
+        ? `${speedData.locationName || 'Unknown Location'} (${lat.toFixed(4)}, ${lon.toFixed(4)})`
         : `GPS Offline (${speedData.gpsStatus === 'denied' ? 'Permission Denied' : 'Signal Unavailable'})`;
       
       const autoMessage = `[🚨 DRIVESAFE SOS ALERT]
@@ -504,12 +505,12 @@ Live Maps: ${mapsUrl}`;
 
   const handleSendAutomatedWhatsApp = (contact: EmergencyContact) => {
     const rawDigits = getRawDigitsForIndianLink(contact.phone);
-    const hasGps = speedData.latitude !== null && speedData.longitude !== null;
     const lat = speedData.latitude;
     const lon = speedData.longitude;
-    const mapsUrl = hasGps ? `https://maps.google.com/?q=${lat?.toFixed(5)},${lon?.toFixed(5)}` : 'GPS Offline';
-    const locationInfo = hasGps
-      ? `${speedData.locationName} (${lat?.toFixed(4)}, ${lon?.toFixed(4)})`
+    const hasGps = typeof lat === 'number' && typeof lon === 'number' && !isNaN(lat) && !isNaN(lon);
+    const mapsUrl = hasGps && lat !== null && lon !== null ? `https://maps.google.com/?q=${lat.toFixed(5)},${lon.toFixed(5)}` : 'GPS Offline';
+    const locationInfo = hasGps && lat !== null && lon !== null
+      ? `${speedData.locationName || 'Unknown Location'} (${lat.toFixed(4)}, ${lon.toFixed(4)})`
       : `GPS Offline (${speedData.gpsStatus === 'denied' ? 'Permission Denied' : 'Signal Unavailable'})`;
     
     const speedText = speedData.isSpeedAvailable && speedData.currentSpeedKmh !== null
@@ -529,12 +530,12 @@ Please check on the driver immediately!`;
 
   const handleSendAutomatedSMS = (contact: EmergencyContact) => {
     const rawDigits = getRawDigitsForIndianLink(contact.phone);
-    const hasGps = speedData.latitude !== null && speedData.longitude !== null;
     const lat = speedData.latitude;
     const lon = speedData.longitude;
-    const mapsUrl = hasGps ? `https://maps.google.com/?q=${lat?.toFixed(5)},${lon?.toFixed(5)}` : 'Unavailable';
-    const locationInfo = hasGps
-      ? `${speedData.locationName} (${lat?.toFixed(4)}, ${lon?.toFixed(4)})`
+    const hasGps = typeof lat === 'number' && typeof lon === 'number' && !isNaN(lat) && !isNaN(lon);
+    const mapsUrl = hasGps && lat !== null && lon !== null ? `https://maps.google.com/?q=${lat.toFixed(5)},${lon.toFixed(5)}` : 'Unavailable';
+    const locationInfo = hasGps && lat !== null && lon !== null
+      ? `${speedData.locationName || 'Unknown Location'} (${lat.toFixed(4)}, ${lon.toFixed(4)})`
       : `GPS Offline (${speedData.gpsStatus === 'denied' ? 'Permission Denied' : 'Signal Unavailable'})`;
     
     const message = `🚨 [EMERGENCY SOS] DriveSafe AI Alert for driver. Location: ${locationInfo} Map: ${mapsUrl}`;
