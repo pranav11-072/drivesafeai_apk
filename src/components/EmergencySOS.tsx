@@ -356,8 +356,8 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverSta
         }
 
         const elapsedMs = now - criticalDrowsyStartTimeRef.current;
-        const elapsedSec = Math.min(5, elapsedMs / 1000);
-        setCriticalSustainedSeconds(elapsedSec);
+        const elapsedSec = Math.min(5, Math.round((elapsedMs / 1000) * 10) / 10);
+        setCriticalSustainedSeconds(prev => (prev !== elapsedSec ? elapsedSec : prev));
 
         // Check if exceeded 5 continuous seconds (5000ms)
         if (elapsedMs >= 5000) {
@@ -371,7 +371,7 @@ export const EmergencySOS: React.FC<EmergencySOSProps> = ({ speedData, driverSta
           criticalDrowsyStartTimeRef.current = null;
           setCriticalSustainedSeconds(0);
         }
-      } else {
+      } else if (criticalDrowsyStartTimeRef.current !== null) {
         // Driver recovered or drowsiness dropped below threshold
         criticalDrowsyStartTimeRef.current = null;
         setCriticalSustainedSeconds(0);

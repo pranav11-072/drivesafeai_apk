@@ -82,6 +82,23 @@ export default function App() {
   React.useEffect(() => {
     setSpeedData(prev => {
       const isOver = gps.currentSpeedKmh !== null && gps.currentSpeedKmh > prev.speedLimitKmh;
+      if (
+        prev.currentSpeedKmh === gps.currentSpeedKmh &&
+        prev.isSpeedAvailable === gps.isSpeedAvailable &&
+        prev.latitude === gps.latitude &&
+        prev.longitude === gps.longitude &&
+        prev.accuracyMeters === gps.accuracyMeters &&
+        prev.heading === gps.heading &&
+        prev.locationName === gps.locationName &&
+        prev.gpsStatus === gps.gpsStatus &&
+        prev.gpsErrorMessage === gps.gpsErrorMessage &&
+        prev.speedSource === gps.speedSource &&
+        prev.lastGpsUpdate === (gps.lastGpsUpdate ?? undefined) &&
+        prev.isOverSpeed === isOver
+      ) {
+        return prev;
+      }
+
       return {
         ...prev,
         currentSpeedKmh: gps.currentSpeedKmh,

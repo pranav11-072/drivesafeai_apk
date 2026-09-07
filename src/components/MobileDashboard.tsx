@@ -254,8 +254,8 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
           criticalDrowsyStartTimeRef.current = now;
         }
         const elapsedMs = now - criticalDrowsyStartTimeRef.current;
-        const elapsedSec = Math.min(5, elapsedMs / 1000);
-        setCriticalSustainedSeconds(elapsedSec);
+        const elapsedSec = Math.min(5, Math.round((elapsedMs / 1000) * 10) / 10);
+        setCriticalSustainedSeconds(prev => (prev !== elapsedSec ? elapsedSec : prev));
 
         if (elapsedMs >= 5000) {
           if (now - lastAutoCallTimeRef.current > 30000 && !isSosModalOpen) {
@@ -279,7 +279,7 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
           criticalDrowsyStartTimeRef.current = null;
           setCriticalSustainedSeconds(0);
         }
-      } else {
+      } else if (criticalDrowsyStartTimeRef.current !== null) {
         criticalDrowsyStartTimeRef.current = null;
         setCriticalSustainedSeconds(0);
       }

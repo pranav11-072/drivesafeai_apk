@@ -97,6 +97,15 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
   const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
   const [selectedCameraId, setSelectedCameraId] = useState<string>('');
 
+  // Active camera stream state and synchronization
+  const [mediaStream, setMediaStream] = useState<MediaStream | null>(null);
+  const [isCameraStarting, setIsCameraStarting] = useState<boolean>(false);
+  const isStartingStreamRef = useRef<boolean>(false);
+  const selectedCameraIdRef = useRef<string>(selectedCameraId);
+  useEffect(() => {
+    selectedCameraIdRef.current = selectedCameraId;
+  }, [selectedCameraId]);
+
   // Worker references
   const workerRef = useRef<Worker | null>(null);
   const isWorkerBusyRef = useRef<boolean>(false);
@@ -123,6 +132,11 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     confidence: 0.95,
   });
 
+  const driverStateRef = useRef(driverState);
+  useEffect(() => {
+    driverStateRef.current = driverState;
+  }, [driverState]);
+
   // Automotive DMS Engineering Diagnostics & Telemetry
   const [hudViewMode, setHudViewMode] = useState<'DIAGNOSTIC' | 'OPERATIONAL'>('DIAGNOSTIC');
   const [showPoseAxes, setShowPoseAxes] = useState<boolean>(true);
@@ -137,164 +151,226 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
   const signalHistoryRef = useRef<SignalSample[]>([]);
   const frameCounterRef = useRef<number>(0);
 
-  // Enumerate cameras on mount
-  useEffect(() => {
-    if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
-      navigator.mediaDevices.enumerateDevices().then(devices => {
+  // Enumerate cameras safely
+  const refreshAvailableCameras = useCallback(async () => {
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices?.enumerateDevices) {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(d => d.kind === 'videoinput');
         setAvailableCameras(videoDevices);
-        if (videoDevices.length > 0 && !selectedCameraId) {
-          setSelectedCameraId(videoDevices[0].deviceId);
-        }
-      }).catch(err => console.warn("Device enumeration error:", err));
+      } catch (err) {
+        console.warn("Device enumeration error:", err);
+      }
     }
-  }, [selectedCameraId]);
+  }, []);
+
+  useEffect(() => {
+    refreshAvailableCameras();
+  }, [refreshAvailableCameras]);
+
+  // Cleanly stops all active camera tracks and resets video element
+  const stopCameraStream = useCallback(() => {
+    isStartingStreamRef.current = false;
+    setIsCameraStarting(false);
+    if (activeStreamRef.current) {
+      activeStreamRef.current.getTracks().forEach(track => {
+        try {
+          track.stop();
+        } catch (e) {
+          console.warn("Error stopping track:", e);
+        }
+      });
+      activeStreamRef.current = null;
+    }
+    setMediaStream(null);
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraPermission(null);
+    setStreamError(null);
+  }, []);
 
   // Function to initialize webcam with user-facing constraints and robust fallbacks
-  const startCameraStream = useCallback(async () => {
-    try {
-      setStreamError(null);
+  const startCameraStream = useCallback(async (targetDeviceId?: string) => {
+    // Prevent overlapping simultaneous requests
+    if (isStartingStreamRef.current) {
+      return;
+    }
 
-      // Stop previous stream if active
-      if (activeStreamRef.current) {
-        activeStreamRef.current.getTracks().forEach(track => track.stop());
-        activeStreamRef.current = null;
-      }
-
-      let stream: MediaStream | null = null;
-      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
-        // Strategy 1: Specific camera if user picked one
-        if (selectedCameraId) {
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({
-              video: { deviceId: { exact: selectedCameraId } },
-              audio: false,
-            });
-          } catch (devErr) {
-            console.warn("Specific camera deviceId failed, falling back to front/user camera:", devErr);
-          }
-        }
-
-        // Strategy 2: Ideal front/user facing camera with 640x480 resolution
-        if (!stream) {
-          try {
-            stream = await navigator.mediaDevices.getUserMedia({
-              video: {
-                facingMode: 'user',
-                width: { ideal: 640 },
-                height: { ideal: 480 },
-                frameRate: { ideal: 30 },
-              },
-              audio: false,
-            });
-          } catch (idealErr) {
-            console.warn("Retrying camera with relaxed facingMode user:", idealErr);
-            try {
-              stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'user' },
-                audio: false,
-              });
-            } catch (facingErr) {
-              console.warn("Retrying with minimal video=true:", facingErr);
-              // Strategy 3: Most permissive constraint
-              stream = await navigator.mediaDevices.getUserMedia({
-                video: true,
-                audio: false,
-              });
-            }
-          }
-        }
-      } else {
-        throw new Error("Camera API is not supported in this browser context (requires HTTPS or modern browser).");
-      }
-
-      if (stream) {
-        activeStreamRef.current = stream;
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          try {
-            await videoRef.current.play();
-          } catch (playErr) {
-            console.warn("Video auto-play deferred until user interaction:", playErr);
-          }
-        }
+    // If active stream already exists with live video tracks and no explicit device change, reuse it
+    if (!targetDeviceId && activeStreamRef.current && activeStreamRef.current.active) {
+      const liveVideoTracks = activeStreamRef.current.getVideoTracks().filter(t => t.readyState === 'live');
+      if (liveVideoTracks.length > 0) {
+        setMediaStream(activeStreamRef.current);
         setCameraPermission(true);
         setIsSimulatorMode(false);
         setStreamError(null);
-
-        // Re-enumerate to get labeled devices now that permission is granted
-        if (navigator.mediaDevices?.enumerateDevices) {
-          navigator.mediaDevices.enumerateDevices().then(devices => {
-            const videoDevices = devices.filter(d => d.kind === 'videoinput');
-            setAvailableCameras(videoDevices);
-          }).catch(() => {});
+        if (videoRef.current && videoRef.current.srcObject !== activeStreamRef.current) {
+          videoRef.current.srcObject = activeStreamRef.current;
+          videoRef.current.play().catch(e => console.warn("Video play error:", e));
         }
-      } else {
+        return;
+      }
+    }
+
+    isStartingStreamRef.current = true;
+    setIsCameraStarting(true);
+    setStreamError(null);
+
+    try {
+      // 1. Check secure context (HTTPS required by modern browsers for camera)
+      if (
+        typeof window !== 'undefined' &&
+        window.isSecureContext === false &&
+        window.location.hostname !== 'localhost' &&
+        window.location.hostname !== '127.0.0.1'
+      ) {
+        throw new Error("SECURE_CONTEXT_REQUIRED");
+      }
+
+      // 2. Compatibility check
+      if (typeof navigator === 'undefined' || (!navigator.mediaDevices?.getUserMedia && !(navigator as any).getUserMedia)) {
+        throw new Error("UNSUPPORTED_BROWSER");
+      }
+
+      // Stop previous stream if switching devices
+      if (activeStreamRef.current) {
+        activeStreamRef.current.getTracks().forEach(track => {
+          try { track.stop(); } catch (_) {}
+        });
+        activeStreamRef.current = null;
+      }
+
+      const deviceIdToUse = targetDeviceId || selectedCameraIdRef.current;
+      let stream: MediaStream | null = null;
+
+      // Strategy 1: Ideal driver front-facing camera with optimal 640x480 resolution & 30fps
+      try {
+        const primaryConstraints: MediaStreamConstraints = {
+          video: deviceIdToUse
+            ? { deviceId: { exact: deviceIdToUse } }
+            : {
+                facingMode: { ideal: 'user' },
+                width: { ideal: 640, min: 320 },
+                height: { ideal: 480, min: 240 },
+                frameRate: { ideal: 30, max: 30 },
+              },
+          audio: false,
+        };
+        stream = await navigator.mediaDevices.getUserMedia(primaryConstraints);
+      } catch (firstErr: any) {
+        console.warn("Primary camera constraints failed, attempting relaxed facingMode:", firstErr);
+        try {
+          // Strategy 2: Relaxed facingMode user
+          const secondaryConstraints: MediaStreamConstraints = {
+            video: { facingMode: { ideal: 'user' } },
+            audio: false,
+          };
+          stream = await navigator.mediaDevices.getUserMedia(secondaryConstraints);
+        } catch (secondErr: any) {
+          console.warn("Secondary camera constraints failed, falling back to universal video=true:", secondErr);
+          // Strategy 3: Most permissive universal fallback (guaranteed to work on any webcam)
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: true,
+            audio: false,
+          });
+        }
+      }
+
+      if (!stream) {
         throw new Error("No video media stream could be opened.");
       }
+
+      activeStreamRef.current = stream;
+      setMediaStream(stream);
+      setCameraPermission(true);
+      setIsSimulatorMode(false);
+      setStreamError(null);
+
+      // Attach immediately to video element
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        try {
+          await videoRef.current.play();
+        } catch (playErr) {
+          console.warn("Video auto-play deferred until user gesture:", playErr);
+        }
+      }
+
+      // Re-enumerate to get labeled devices now that permission is granted
+      refreshAvailableCameras();
     } catch (err: any) {
       console.warn("Camera access error:", err);
       setCameraPermission(false);
-      
+      setMediaStream(null);
+
       let errorMsg = "Webcam not accessible. You can use the Virtual Driver Simulator or open in a full tab.";
-      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-        errorMsg = "Camera permission was denied by browser or iframe policy. Click 'Open in New Tab' to grant camera permissions directly, or switch to Virtual Simulator.";
+      if (err?.message === 'SECURE_CONTEXT_REQUIRED') {
+        errorMsg = "Camera access requires a secure HTTPS connection. Please ensure you are viewing this app over HTTPS (e.g. deployed on Vercel or secure custom domain).";
+      } else if (err?.message === 'UNSUPPORTED_BROWSER') {
+        errorMsg = "Your browser does not support webcam capture (navigator.mediaDevices.getUserMedia). Please update to a modern browser like Chrome, Safari, Edge, or Firefox.";
+      } else if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        errorMsg = "Camera permission was denied. Please click the camera/lock icon in your browser address bar to allow camera access, then click 'Retry Permission'.";
       } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
-        errorMsg = "No webcam hardware detected on this device. You can test safety alerts in Virtual Simulator mode.";
-      } else if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError') {
-        errorMsg = "Camera hardware is currently in use by another program (e.g. Zoom, Teams, Meet) or locked.";
+        errorMsg = "No webcam hardware detected on this device. Please connect a webcam or switch to Virtual Simulator mode.";
+      } else if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError' || err?.name === 'AbortError') {
+        errorMsg = "Camera hardware is currently in use by another program (e.g. Zoom, Teams, Meet) or locked by the system. Please close other camera apps and retry.";
       } else if (err?.name === 'SecurityError') {
         errorMsg = "Camera access restricted inside iframe. Click 'Open in New Tab' to grant full camera permissions.";
+      } else if (err?.name === 'OverconstrainedError' || err?.name === 'ConstraintNotSatisfiedError') {
+        errorMsg = "Camera requested resolution/settings are not supported by your hardware.";
+      } else if (err?.message) {
+        errorMsg = err.message;
       }
       setStreamError(errorMsg);
+    } finally {
+      setIsCameraStarting(false);
+      isStartingStreamRef.current = false;
     }
-  }, [selectedCameraId]);
+  }, [refreshAvailableCameras]);
+
+  // Handle switching video device from dropdown
+  const handleSelectCamera = useCallback(async (deviceId: string) => {
+    setSelectedCameraId(deviceId);
+    selectedCameraIdRef.current = deviceId;
+    if (isMonitoring && !isSimulatorMode) {
+      await startCameraStream(deviceId);
+    }
+  }, [isMonitoring, isSimulatorMode, startCameraStream]);
 
   // Manage camera lifecycle based on isMonitoring state
   useEffect(() => {
     if (isMonitoring && !isSimulatorMode) {
       startCameraStream();
     } else if (!isMonitoring) {
-      if (activeStreamRef.current) {
-        activeStreamRef.current.getTracks().forEach(track => track.stop());
-        activeStreamRef.current = null;
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
-      setCameraPermission(null);
-      setStreamError(null);
+      stopCameraStream();
       setActiveEventTrigger(null);
     }
 
     return () => {
       if (activeStreamRef.current) {
-        activeStreamRef.current.getTracks().forEach(track => track.stop());
+        activeStreamRef.current.getTracks().forEach(track => {
+          try { track.stop(); } catch (_) {}
+        });
         activeStreamRef.current = null;
       }
     };
-  }, [isMonitoring, isSimulatorMode, startCameraStream]);
+  }, [isMonitoring, isSimulatorMode, startCameraStream, stopCameraStream]);
 
-  // Synchronize active media stream with videoRef when mounted or state updates
+  // Synchronize active media stream with videoRef whenever mounted or state updates
   useEffect(() => {
-    if (activeStreamRef.current && videoRef.current && videoRef.current.srcObject !== activeStreamRef.current) {
-      videoRef.current.srcObject = activeStreamRef.current;
+    if (mediaStream && videoRef.current && videoRef.current.srcObject !== mediaStream) {
+      videoRef.current.srcObject = mediaStream;
       videoRef.current.play().catch(e => console.warn("Video stream attach error:", e));
     }
-  });
+  }, [mediaStream, isMonitoring, isSimulatorMode]);
 
   const handleStartCamera = async (forceSimulator: boolean = false) => {
     soundManager.unlockAudioContext();
     setStreamError(null);
     if (forceSimulator) {
       setIsSimulatorMode(true);
-      if (activeStreamRef.current) {
-        activeStreamRef.current.getTracks().forEach(track => track.stop());
-        activeStreamRef.current = null;
-      }
-      if (videoRef.current) {
-        videoRef.current.srcObject = null;
-      }
+      stopCameraStream();
       if (onToggleMonitoring) {
         onToggleMonitoring(true);
       } else {
@@ -315,20 +391,16 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           lastAiMessage: "AI Driver Vision active. Connecting camera...",
         }));
       }
-      await startCameraStream();
+      // If already in monitoring mode (e.g. switching back from simulator or retrying), start stream directly
+      if (isMonitoring) {
+        await startCameraStream();
+      }
     }
   };
 
   const handleStopCamera = () => {
     soundManager.unlockAudioContext();
-    if (activeStreamRef.current) {
-      activeStreamRef.current.getTracks().forEach(track => track.stop());
-      activeStreamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    setCameraPermission(null);
+    stopCameraStream();
     if (onToggleMonitoring) {
       onToggleMonitoring(false);
     } else {
@@ -408,10 +480,10 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           imageBase64: frameBase64,
           triggerEvent,
           localMetrics: localTelemetry || {
-            ear: driverState.ear,
-            mar: driverState.mar,
-            yaw: driverState.headTilt,
-            driverPresent: driverState.driverPresent,
+            ear: driverStateRef.current.ear,
+            mar: driverStateRef.current.mar,
+            yaw: driverStateRef.current.headTilt,
+            driverPresent: driverStateRef.current.driverPresent,
           },
         }),
       });
@@ -438,7 +510,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
         // Compute updated safety score based on Gemini risk level and penalty
         const scorePenalty = data.safetyScorePenalty ?? (structuredAnalysis.riskLevel === 'high' ? 25 : structuredAnalysis.riskLevel === 'medium' ? 10 : 0);
-        const newSafetyScore = Math.max(15, Math.min(100, (driverState.safetyScore || 100) - scorePenalty));
+        const newSafetyScore = Math.max(15, Math.min(100, (driverStateRef.current.safetyScore || 100) - scorePenalty));
 
         const isRed = structuredAnalysis.riskLevel === 'high' || data.alertLevel === 'RED' || !structuredAnalysis.driverDetected;
         const isYellow = structuredAnalysis.riskLevel === 'medium' || data.alertLevel === 'YELLOW';
@@ -501,7 +573,12 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
       setIsAiAnalyzing(false);
       setTimeout(() => setActiveEventTrigger(null), 3500);
     }
-  }, [captureCurrentFrame, driverState.ear, driverState.mar, driverState.headTilt, driverState.driverPresent, driverState.safetyScore, setDriverState]);
+  }, [captureCurrentFrame, setDriverState]);
+
+  const dispatchSafetyEventToGeminiRef = useRef(dispatchSafetyEventToGemini);
+  useEffect(() => {
+    dispatchSafetyEventToGeminiRef.current = dispatchSafetyEventToGemini;
+  }, [dispatchSafetyEventToGemini]);
 
   // Real-time Computer Vision via Web Worker & 60 FPS Main-Thread Canvas Overlay
   useEffect(() => {
@@ -525,7 +602,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         // When local real-time detection flags a potential safety event,
         // automatically capture the current frame and send ONLY this event to Gemini!
         if (data.potentialSafetyEvent) {
-          dispatchSafetyEventToGemini(data.potentialSafetyEvent, {
+          dispatchSafetyEventToGeminiRef.current(data.potentialSafetyEvent, {
             ear: data.metrics.ear,
             mar: data.metrics.mar,
             yaw: data.metrics.yaw,
@@ -588,11 +665,11 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           simTick += 0.035;
           const simHeadX = 0.5 + Math.sin(simTick * 0.4) * 0.03;
           const simHeadY = 0.52 + Math.cos(simTick * 0.25) * 0.015;
-          const isSimClosed = driverState.eyesClosed;
-          const isSimYawning = driverState.isYawning;
-          const isSimDistracted = driverState.isDistracted;
-          const isSimAbsent = !driverState.driverPresent;
-          const isSimAbnormal = driverState.abnormalBehavior;
+          const isSimClosed = driverStateRef.current.eyesClosed;
+          const isSimYawning = driverStateRef.current.isYawning;
+          const isSimDistracted = driverStateRef.current.isDistracted;
+          const isSimAbsent = !driverStateRef.current.driverPresent;
+          const isSimAbnormal = driverStateRef.current.abnormalBehavior;
 
           latestWorkerResultRef.current = {
             type: 'FACE_ANALYSIS_RESULT',
@@ -727,8 +804,8 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           octx.beginPath(); octx.moveTo(W - edgeMargin - tickLen, H - edgeMargin); octx.lineTo(W - edgeMargin, H - edgeMargin); octx.lineTo(W - edgeMargin, H - edgeMargin - tickLen); octx.stroke();
 
           if (sm.faceFound) {
-            const isAlertRed = driverState.alertLevel === 'RED' || driverState.eyesClosed || sm.ear < earThreshold;
-            const isAlertYellow = driverState.alertLevel === 'YELLOW' || driverState.isYawning || driverState.isDistracted || sm.mar > marThreshold;
+            const isAlertRed = driverStateRef.current.alertLevel === 'RED' || driverStateRef.current.eyesClosed || sm.ear < earThreshold;
+            const isAlertYellow = driverStateRef.current.alertLevel === 'YELLOW' || driverStateRef.current.isYawning || driverStateRef.current.isDistracted || sm.mar > marThreshold;
             const primaryColor = isAlertRed ? '#ef4444' : isAlertYellow ? '#f59e0b' : '#38bdf8';
 
             const boxX = sm.x - sm.w / 2;
@@ -868,7 +945,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         workerRef.current = null;
       }
     };
-  }, [isMonitoring, isSimulatorMode, cameraPermission, isMirrored, driverState.eyesClosed, driverState.isYawning, driverState.isDistracted, driverState.abnormalBehavior, driverState.driverPresent, driverState.alertLevel, setDriverState, dispatchSafetyEventToGemini]);
+  }, [isMonitoring, isSimulatorMode, cameraPermission, isMirrored, earThreshold, marThreshold, setDriverState]);
 
   // Test Simulators:
   // Instead of static dummy toggles, they immediately trigger the full event-driven pipeline:
@@ -992,13 +1069,26 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             autoPlay
             playsInline
             muted
+            controls={false}
             onLoadedMetadata={(e) => {
               e.currentTarget.play().catch(err => console.warn("Video play catch:", err));
             }}
+            onCanPlay={(e) => {
+              e.currentTarget.play().catch(err => console.warn("Video canplay catch:", err));
+            }}
             className={`w-full h-full object-cover transition-opacity duration-200 ${isMirrored ? 'transform -scale-x-100' : ''} ${
-              !isMonitoring || isSimulatorMode || !activeStreamRef.current ? 'opacity-0' : 'opacity-100'
+              !isMonitoring || isSimulatorMode || !mediaStream ? 'opacity-0 pointer-events-none' : 'opacity-100'
             }`}
           />
+
+          {/* Camera Connecting Loading Spinner */}
+          {isCameraStarting && isMonitoring && !isSimulatorMode && !streamError && (
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-4 text-center backdrop-blur-md bg-slate-950/85">
+              <RefreshCw className="w-7 h-7 text-sky-400 animate-spin mb-1.5" />
+              <p className="text-[11px] font-bold text-white uppercase tracking-wider">Connecting Camera</p>
+              <p className="text-[10px] text-slate-300 mt-0.5">Please allow camera permissions if prompted</p>
+            </div>
+          )}
 
           {/* Real-Time Facial Landmarks Overlay Canvas */}
           <canvas
@@ -1203,13 +1293,28 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           autoPlay
           playsInline
           muted
+          controls={false}
           onLoadedMetadata={(e) => {
             e.currentTarget.play().catch(err => console.warn("Video play catch:", err));
           }}
+          onCanPlay={(e) => {
+            e.currentTarget.play().catch(err => console.warn("Video canplay catch:", err));
+          }}
           className={`w-full h-full object-cover transition-opacity duration-200 ${isMirrored ? 'transform -scale-x-100' : ''} ${
-            !isMonitoring || isSimulatorMode || !activeStreamRef.current ? 'opacity-0' : 'opacity-100'
+            !isMonitoring || isSimulatorMode || !mediaStream ? 'opacity-0 pointer-events-none' : 'opacity-100'
           }`}
         />
+
+        {/* Camera Connecting Loading Spinner */}
+        {isCameraStarting && isMonitoring && !isSimulatorMode && !streamError && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center backdrop-blur-md bg-slate-950/85">
+            <RefreshCw className="w-9 h-9 text-sky-400 animate-spin mb-3" />
+            <p className="text-sm font-bold text-white uppercase tracking-wider">Connecting Webcam Feed</p>
+            <p className="text-xs text-slate-300 mt-1 max-w-sm">
+              Please click "Allow" if prompted for camera permission by your browser...
+            </p>
+          </div>
+        )}
 
         {/* Real-Time Facial Landmarks Overlay Canvas */}
         <canvas
@@ -1288,7 +1393,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                 {availableCameras.length > 1 && (
                   <select
                     value={selectedCameraId}
-                    onChange={(e) => setSelectedCameraId(e.target.value)}
+                    onChange={(e) => handleSelectCamera(e.target.value)}
                     className="bg-slate-900/90 text-slate-200 border border-white/10 rounded px-1.5 py-0.5 text-[10px] focus:outline-none focus:border-sky-400 max-w-[120px] truncate"
                     title="Select video input device"
                   >
@@ -1485,7 +1590,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         <div className="mt-2 px-3 py-1.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-[11px] flex items-center justify-between">
           <span>{streamError}</span>
           <button
-            onClick={startCameraStream}
+            onClick={() => handleStartCamera(false)}
             className="underline text-amber-200 hover:text-white font-medium ml-2"
           >
             Retry Camera

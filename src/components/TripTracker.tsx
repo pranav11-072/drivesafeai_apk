@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Route,
   MapPin,
@@ -112,59 +112,81 @@ export const TripTracker: React.FC<TripTrackerProps> = ({
     driverState.alertLevel,
   ]);
 
+  const speedDataRef = useRef(speedData);
+  useEffect(() => {
+    speedDataRef.current = speedData;
+  }, [speedData]);
+
+  const driverStateRef = useRef(driverState);
+  useEffect(() => {
+    driverStateRef.current = driverState;
+  }, [driverState]);
+
+  const activeTripRef = useRef(activeTrip);
+  useEffect(() => {
+    activeTripRef.current = activeTrip;
+  }, [activeTrip]);
+
   // Update active trip metrics in real time
   useEffect(() => {
     let interval: any = null;
     if (isMonitoring) {
-      if (!activeTrip) {
-        setActiveTrip({
+      if (!activeTripRef.current) {
+        const initialTrip: TripRecord = {
           id: `trip-${Date.now()}`,
           startTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           durationSeconds: 0,
           distanceKm: 0.0,
-          avgSpeedKmh: speedData.currentSpeedKmh || 0,
-          maxSpeedKmh: speedData.currentSpeedKmh || 0,
+          avgSpeedKmh: speedDataRef.current.currentSpeedKmh || 0,
+          maxSpeedKmh: speedDataRef.current.currentSpeedKmh || 0,
           drowsinessAlertsCount: 0,
           safetyScore: 100,
-        });
-      } else {
-        interval = setInterval(() => {
-          setActiveTrip(prev => {
-            if (!prev) return null;
-            const newDuration = prev.durationSeconds + 1;
-            const currentSpeed = speedData.currentSpeedKmh || 0;
-            const addedDistance = currentSpeed / 3600; // km in 1 second
-            const newDistance = prev.distanceKm + addedDistance;
-            const newMaxSpeed = Math.max(prev.maxSpeedKmh, currentSpeed);
-            const newDrowsinessCount =
-              prev.drowsinessAlertsCount + (driverState.alertLevel === 'RED' ? 1 : 0);
-
-            return {
-              ...prev,
-              durationSeconds: newDuration,
-              distanceKm: parseFloat(newDistance.toFixed(2)),
-              maxSpeedKmh: newMaxSpeed,
-              drowsinessAlertsCount: newDrowsinessCount,
-            };
-          });
-        }, 1000);
+        };
+        activeTripRef.current = initialTrip;
+        setActiveTrip(initialTrip);
       }
-    } else if (activeTrip) {
+
+      interval = setInterval(() => {
+        setActiveTrip(prev => {
+          if (!prev) return null;
+          const currentSpeed = speedDataRef.current.currentSpeedKmh || 0;
+          const addedDistance = currentSpeed / 3600; // km in 1 second
+          const newDistance = prev.distanceKm + addedDistance;
+          const newMaxSpeed = Math.max(prev.maxSpeedKmh, currentSpeed);
+          const newDrowsinessCount =
+            prev.drowsinessAlertsCount + (driverStateRef.current.alertLevel === 'RED' ? 1 : 0);
+
+          const updated: TripRecord = {
+            ...prev,
+            durationSeconds: prev.durationSeconds + 1,
+            distanceKm: parseFloat(newDistance.toFixed(2)),
+            maxSpeedKmh: newMaxSpeed,
+            drowsinessAlertsCount: newDrowsinessCount,
+          };
+          activeTripRef.current = updated;
+          return updated;
+        });
+      }, 1000);
+    } else if (activeTripRef.current) {
       // Complete active trip
+      const tripToSave = activeTripRef.current;
       const completedTrip: TripRecord = {
-        ...activeTrip,
+        ...tripToSave,
         endTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         aiSummary:
-          activeTrip.drowsinessAlertsCount === 0
+          tripToSave.drowsinessAlertsCount === 0
             ? 'Trip completed with high alertness.'
-            : `Trip logged with ${activeTrip.drowsinessAlertsCount} fatigue warning(s).`,
+            : `Trip logged with ${tripToSave.drowsinessAlertsCount} fatigue warning(s).`,
       };
       setPastTrips(prev => [completedTrip, ...prev]);
+      activeTripRef.current = null;
       setActiveTrip(null);
     }
 
-    return () => clearInterval(interval);
-  }, [isMonitoring, speedData.currentSpeedKmh, driverState.alertLevel]);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [isMonitoring]);
 
   // SVG Mini-Map Calculation
   const svgMapData = useMemo(() => {

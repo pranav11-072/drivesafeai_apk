@@ -64,7 +64,7 @@ export function useHarshDrivingDetector(speedData?: SpeedData | null, isMonitori
     }
 
     prevSpeedRef.current = { speed: currentSpeed, time: now };
-  }, [speedData, isMonitoring]);
+  }, [speedData?.currentSpeedKmh, speedData?.isSpeedAvailable, isMonitoring]);
 
   return {
     harshEventsCount,

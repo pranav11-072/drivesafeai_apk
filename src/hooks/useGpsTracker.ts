@@ -23,7 +23,7 @@ export function useGpsTracker(options?: UseGpsTrackerOptions) {
   const [liveGpsSpeedKmh, setLiveGpsSpeedKmh] = useState<number | null>(null);
   const [locationName, setLocationName] = useState<string>('Acquiring GPS fix...');
   const [gpsErrorMessage, setGpsErrorMessage] = useState<string | null>(null);
-  const [lastGpsUpdate, setLastGpsUpdate] = useState<number | null>(null);
+  const [lastGpsUpdate, setLastGpsUpdate] = useState<number | null>(() => Date.now());
 
   // Manual test override (clearly labeled when engaged)
   const [isManualOverride, setIsManualOverride] = useState(false);
@@ -107,22 +107,25 @@ export function useGpsTracker(options?: UseGpsTrackerOptions) {
       }
 
       // Advance simulated coordinates along heading
-      const dtHours = 0.3 / 3600; // 300ms in hours
-      const distanceKm = currentSpeedFloatRef.current * dtHours;
-      const headingRad = (simCoords.heading * Math.PI) / 180;
-      const dLat = (distanceKm / 111.32) * Math.cos(headingRad);
-      const dLng = (distanceKm / (111.32 * Math.cos((simCoords.lat * Math.PI) / 180))) * Math.sin(headingRad);
-      const headingWobble = (Math.random() - 0.5) * 1.5;
+      setSimCoords(prev => {
+        const dtHours = 0.3 / 3600; // 300ms in hours
+        const distanceKm = currentSpeedFloatRef.current * dtHours;
+        const headingRad = (prev.heading * Math.PI) / 180;
+        const dLat = (distanceKm / 111.32) * Math.cos(headingRad);
+        const dLng = (distanceKm / (111.32 * Math.cos((prev.lat * Math.PI) / 180))) * Math.sin(headingRad);
+        const headingWobble = (Math.random() - 0.5) * 1.5;
+        return {
+          lat: prev.lat + dLat,
+          lng: prev.lng + dLng,
+          heading: (prev.heading + headingWobble + 360) % 360,
+        };
+      });
 
-      setSimCoords(prev => ({
-        lat: prev.lat + dLat,
-        lng: prev.lng + dLng,
-        heading: (prev.heading + headingWobble + 360) % 360,
-      }));
+      setLastGpsUpdate(now);
     }, 300);
 
     return () => clearInterval(interval);
-  }, [isRandomRunning, isManualOverride, randomSpeedProfile, options?.speedLimitKmh, options?.onSpeedOverLimit, simCoords.lat, simCoords.heading]);
+  }, [isRandomRunning, isManualOverride, randomSpeedProfile, options?.speedLimitKmh, options?.onSpeedOverLimit]);
 
   const clearGpsWatch = useCallback(() => {
     if (watchIdRef.current !== null && typeof navigator !== 'undefined' && 'geolocation' in navigator) {
@@ -350,7 +353,7 @@ export function useGpsTracker(options?: UseGpsTrackerOptions) {
     locationName: effectiveLocationName,
     gpsErrorMessage,
     speedSource,
-    lastGpsUpdate: lastGpsUpdate || (isRandomRunning ? Date.now() : null),
+    lastGpsUpdate: lastGpsUpdate,
     // Controls
     isManualOverride,
     setIsManualOverride,
