@@ -237,44 +237,100 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
   }
 
   // 2. Multi-Zone Facial Feature & Eye Aspect Ratio Extraction
-  // Eye region: upper central band of face bounding box
-  const eyeZoneTop = Math.max(0, Math.floor((normCenterY - boxH * 0.22) * height));
-  const eyeZoneBottom = Math.min(height, Math.floor((normCenterY - boxH * 0.02) * height));
-  const eyeZoneLeft = Math.max(0, Math.floor((normCenterX - boxW * 0.32) * width));
-  const eyeZoneRight = Math.min(width, Math.floor((normCenterX + boxW * 0.32) * width));
+  // 2. High-Precision Dual-Eye Extraction & Eye Aspect Ratio (EAR)
+  // Human eyes are positioned symmetrically on the upper third of the facial bounding box
+  const eyeCenterY = normCenterY - boxH * 0.12;
+  const eyeRadiusX = Math.max(4, Math.floor(boxW * 0.11 * width));
+  const eyeRadiusY = Math.max(3, Math.floor(boxH * 0.07 * height));
 
-  let eyeDarkPixels = 0;
-  let eyeTotalPixels = 0;
-  let eyeLuminanceSum = 0;
+  const leftEyeCenterX = Math.floor((normCenterX - boxW * 0.18) * width);
+  const rightEyeCenterX = Math.floor((normCenterX + boxW * 0.18) * width);
+  const eyeCenterPixelY = Math.floor(eyeCenterY * height);
 
-  for (let ey = eyeZoneTop; ey < eyeZoneBottom; ey++) {
-    for (let ex = eyeZoneLeft; ex < eyeZoneRight; ex++) {
-      const idx = (ey * width + ex) * 4;
-      const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-      eyeLuminanceSum += lum;
-      eyeTotalPixels++;
-      // Dark pupil / iris / shadow threshold relative to face ambient brightness
-      if (lum < Math.max(20, avgLuminance * 0.50)) {
-        eyeDarkPixels++;
+  // Helper to compute local eye metrics: standard deviation (contrast), dark pupil ratio, and luminance spread
+  const analyzeEyeRegion = (centerX: number, centerY: number) => {
+    const xMin = Math.max(0, centerX - eyeRadiusX);
+    const xMax = Math.min(width, centerX + eyeRadiusX);
+    const yMin = Math.max(0, centerY - eyeRadiusY);
+    const yMax = Math.min(height, centerY + eyeRadiusY);
+
+    let count = 0;
+    let sum = 0;
+    let minL = 255;
+    let maxL = 0;
+    const lums: number[] = [];
+
+    for (let py = yMin; py < yMax; py++) {
+      for (let px = xMin; px < xMax; px++) {
+        const idx = (py * width + px) * 4;
+        const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
+        lums.push(lum);
+        sum += lum;
+        if (lum < minL) minL = lum;
+        if (lum > maxL) maxL = lum;
+        count++;
       }
     }
-  }
 
-  const eyeDarkRatio = eyeTotalPixels > 0 ? eyeDarkPixels / eyeTotalPixels : 0;
-  const avgEyeLum = eyeTotalPixels > 0 ? eyeLuminanceSum / eyeTotalPixels : 80;
+    if (count < 6) return { isClosed: false, ear: 0.32, pupilRatio: 0.15, stdDev: 20 };
 
-  // Closed eyelid criteria: eye region lacks expected pupil/iris contrast and has reduced vertical gradient
-  // Uses relative eye-to-face contrast to prevent false triggers on darker eye sockets or glasses
-  const isEyelidClosed = eyeTotalPixels > 16 && (
-    (eyeDarkRatio < 0.022 && avgEyeLum < Math.max(12, avgLuminance * 0.28)) ||
-    (eyeDarkRatio < 0.012)
-  );
+    const mean = sum / count;
+    let varSum = 0;
+    let darkCount = 0;
 
-  if (isEyelidClosed) {
-    consecutiveClosedFrames++;
+    // Pupil threshold: significantly darker than the eye's local average skin tone
+    const darkThreshold = Math.min(mean - 12, Math.max(25, avgLuminance * 0.70));
+
+    for (let i = 0; i < count; i++) {
+      const diff = lums[i] - mean;
+      varSum += diff * diff;
+      if (lums[i] < darkThreshold) {
+        darkCount++;
+      }
+    }
+
+    const stdDev = Math.sqrt(varSum / count);
+    const pupilRatio = darkCount / count;
+    const spread = maxL - minL;
+
+    // Closed eye characteristics:
+    // 1. When eyes are open, dark pupil/iris + white sclera creates high contrast (stdDev > 14, spread > 35, pupilRatio > 0.05).
+    // 2. When eyelid is closed, the dark pupil vanishes under uniform eyelid skin:
+    //    pupilRatio drops (< 0.038) OR contrast drops sharply (stdDev < 12 && spread < 34).
+    const isClosed = (pupilRatio < 0.038 && stdDev < 16) || (stdDev < 11 && spread < 32) || (pupilRatio < 0.018);
+
+    // Calculated EAR between 0.08 (closed) and 0.36 (wide open)
+    const computedEar = isClosed
+      ? Math.max(0.08, 0.12 - (1 - pupilRatio) * 0.04)
+      : Math.min(0.38, 0.24 + pupilRatio * 0.5 + (stdDev / 100) * 0.1);
+
+    return { isClosed, ear: computedEar, pupilRatio, stdDev };
+  };
+
+  const leftAnalysis = analyzeEyeRegion(leftEyeCenterX, eyeCenterPixelY);
+  const rightAnalysis = analyzeEyeRegion(rightEyeCenterX, eyeCenterPixelY);
+
+  // Both eyes or the clearly visible eye indicating closure
+  const isEyeClosedInstant = (leftAnalysis.isClosed && rightAnalysis.isClosed) ||
+    ((leftAnalysis.ear + rightAnalysis.ear) / 2 < 0.18) ||
+    (leftAnalysis.isClosed && rightAnalysis.ear < 0.20) ||
+    (rightAnalysis.isClosed && leftAnalysis.ear < 0.20);
+
+  // Instantaneous EAR averaged across eyes
+  const instantEar = (leftAnalysis.ear + rightAnalysis.ear) / 2;
+
+  // Leaky integrator for temporal stability:
+  // Normal blink: lasts 1-3 frames (~150-300ms) -> won't trigger alarm.
+  // Micro-sleep / prolonged eye closure: 5+ frames (~500ms+) -> triggers immediate alarm!
+  if (isEyeClosedInstant) {
+    consecutiveClosedFrames += 1;
   } else {
-    consecutiveClosedFrames = 0;
+    // Graceful decay instead of instant reset prevents single-frame sensor noise from resetting a true sleep event
+    consecutiveClosedFrames = Math.max(0, consecutiveClosedFrames - 2);
   }
+
+  // Eyelid is flagged as closed if closed for 3+ frames (~300ms)
+  const isEyelidClosed = consecutiveClosedFrames >= 3;
 
   // Mouth Zone: lower central region of face box
   const mouthZoneTop = Math.min(height, Math.floor((normCenterY + boxH * 0.08) * height));
@@ -290,34 +346,36 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
       const idx = (my * width + mx) * 4;
       const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
       mouthTotalPixels++;
-      if (lum < Math.max(20, avgLuminance * 0.40)) {
+      if (lum < Math.max(20, avgLuminance * 0.42)) {
         mouthDarkPixels++;
       }
     }
   }
 
   const mouthOpenRatio = mouthTotalPixels > 0 ? mouthDarkPixels / mouthTotalPixels : 0;
-  const isMouthYawning = mouthTotalPixels > 14 && mouthOpenRatio > 0.28;
+  const isMouthYawningInstant = mouthTotalPixels > 14 && mouthOpenRatio > 0.24;
 
-  if (isMouthYawning) {
+  if (isMouthYawningInstant) {
     consecutiveYawnFrames++;
   } else {
-    consecutiveYawnFrames = 0;
+    consecutiveYawnFrames = Math.max(0, consecutiveYawnFrames - 2);
   }
+
+  const isMouthYawning = consecutiveYawnFrames >= 6;
 
   // Head Pose Estimation: 3D angles in degrees (calibrated around center 0.50, 0.46)
   const yaw = (normCenterX - 0.5) * 52; // Horizontal offset (-26 to +26)
   const pitch = (normCenterY - 0.46) * 42; // Vertical tilt
   const roll = 0;
 
-  // Head is turned away if yaw > 24° or pitch > 22°
-  const isHeadTurned = Math.abs(yaw) > 24 || Math.abs(pitch) > 22;
+  // Head is turned away if yaw > 22° or pitch > 20°
+  const isHeadTurned = Math.abs(yaw) > 22 || Math.abs(pitch) > 20;
   const isDistracted = isHeadTurned;
 
   if (isDistracted) {
     consecutiveDistractedFrames++;
   } else {
-    consecutiveDistractedFrames = 0;
+    consecutiveDistractedFrames = Math.max(0, consecutiveDistractedFrames - 2);
   }
 
   // Abnormal / Inattentive Behavior: Head slumping forward / nodding off (pitch > 24° down, rapid delta from prevPitch)
@@ -326,31 +384,31 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
   if (isHeadSlump || (isDistracted && isEyelidClosed)) {
     consecutiveAbnormalFrames++;
   } else {
-    consecutiveAbnormalFrames = 0;
+    consecutiveAbnormalFrames = Math.max(0, consecutiveAbnormalFrames - 2);
   }
   prevPitch = prevPitch * 0.5 + pitch * 0.5;
 
   // Compute fine-grained EAR & MAR with exponential smoothing
-  // Normal attentive EAR is ~0.30 - 0.36; prolonged closed is < 0.16
-  const targetEar = isEyelidClosed ? 0.12 + Math.random() * 0.02 : 0.33 + Math.random() * 0.02;
+  // Normal attentive EAR is ~0.30 - 0.36; closed is < 0.16
+  const targetEar = isEyelidClosed ? Math.min(0.14, instantEar) : Math.max(0.25, instantEar);
   const targetMar = isMouthYawning ? 0.68 + Math.random() * 0.04 : 0.12 + Math.random() * 0.02;
 
-  prevEar = prevEar * 0.35 + targetEar * 0.65;
-  prevMar = prevMar * 0.35 + targetMar * 0.65;
+  prevEar = prevEar * 0.25 + targetEar * 0.75;
+  prevMar = prevMar * 0.25 + targetMar * 0.75;
 
   // 3. Potential Safety Event Detection Logic:
-  // - Prolonged Eye Closure: 14+ consecutive closed frames (~1.5s+) avoids false triggers on normal blinks
-  // - Yawning: 14+ consecutive yawn frames (~1.5s+)
-  // - Distraction: 16+ consecutive distracted frames (~1.8s+)
-  // - Abnormal Behavior: 14+ consecutive head slump frames (~1.5s+)
+  // - Prolonged Eye Closure: 6+ consecutive closed frames (~600ms+) triggers safety event
+  // - Yawning: 8+ consecutive yawn frames (~800ms+)
+  // - Distraction: 10+ consecutive distracted frames (~1.0s+)
+  // - Abnormal Behavior: 8+ consecutive head slump frames (~800ms+)
   let potentialSafetyEvent: PotentialSafetyEventType | null = null;
-  if (consecutiveClosedFrames >= 14) {
+  if (consecutiveClosedFrames >= 5) {
     potentialSafetyEvent = 'PROLONGED_EYE_CLOSURE';
-  } else if (consecutiveAbnormalFrames >= 14) {
+  } else if (consecutiveAbnormalFrames >= 8) {
     potentialSafetyEvent = 'ABNORMAL_BEHAVIOR';
-  } else if (consecutiveYawnFrames >= 14) {
+  } else if (consecutiveYawnFrames >= 8) {
     potentialSafetyEvent = 'YAWNING';
-  } else if (consecutiveDistractedFrames >= 16) {
+  } else if (consecutiveDistractedFrames >= 10) {
     potentialSafetyEvent = 'DISTRACTION';
   }
 

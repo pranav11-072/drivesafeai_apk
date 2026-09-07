@@ -4,7 +4,7 @@ import {
   CheckCircle2, UserCheck, UserX, Video, VideoOff, FlipHorizontal,
   AlertTriangle, ShieldCheck, ShieldAlert, Sliders, Activity, Cpu,
   Gauge, Terminal, Layers, Crosshair, ChevronDown, ChevronUp,
-  Play, Square, ExternalLink
+  Play, Square, ExternalLink, Bell
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DriverState, AlertLevel, GeminiFrameAnalysisResult } from '../types';
@@ -218,20 +218,23 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     setStreamError(null);
 
     try {
-      // 1. Check secure context (HTTPS required by modern browsers for camera)
-      if (
-        typeof window !== 'undefined' &&
-        window.isSecureContext === false &&
-        window.location.hostname !== 'localhost' &&
-        window.location.hostname !== '127.0.0.1'
-      ) {
-        throw new Error("SECURE_CONTEXT_REQUIRED");
-      }
-
-      // 2. Compatibility check
-      if (typeof navigator === 'undefined' || (!navigator.mediaDevices?.getUserMedia && !(navigator as any).getUserMedia)) {
+      // 1. Universal getUserMedia helper with modern and legacy fallbacks
+      const requestMedia = async (constraints: MediaStreamConstraints): Promise<MediaStream> => {
+        if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+          return await navigator.mediaDevices.getUserMedia(constraints);
+        }
+        const legacyGUM = typeof navigator !== 'undefined' && (
+          (navigator as any).getUserMedia ||
+          (navigator as any).webkitGetUserMedia ||
+          (navigator as any).mozGetUserMedia
+        );
+        if (legacyGUM) {
+          return new Promise((resolve, reject) => {
+            legacyGUM.call(navigator, constraints, resolve, reject);
+          });
+        }
         throw new Error("UNSUPPORTED_BROWSER");
-      }
+      };
 
       // Stop previous stream if switching devices
       if (activeStreamRef.current) {
@@ -244,33 +247,33 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
       const deviceIdToUse = targetDeviceId || selectedCameraIdRef.current;
       let stream: MediaStream | null = null;
 
-      // Strategy 1: Ideal driver front-facing camera with optimal 640x480 resolution & 30fps
+      // Strategy 1: Ideal driver front-facing camera with optimal 640x480 resolution
       try {
         const primaryConstraints: MediaStreamConstraints = {
           video: deviceIdToUse
             ? { deviceId: { exact: deviceIdToUse } }
             : {
-                facingMode: { ideal: 'user' },
+                facingMode: 'user',
                 width: { ideal: 640, min: 320 },
                 height: { ideal: 480, min: 240 },
                 frameRate: { ideal: 30, max: 30 },
               },
           audio: false,
         };
-        stream = await navigator.mediaDevices.getUserMedia(primaryConstraints);
+        stream = await requestMedia(primaryConstraints);
       } catch (firstErr: any) {
         console.warn("Primary camera constraints failed, attempting relaxed facingMode:", firstErr);
         try {
           // Strategy 2: Relaxed facingMode user
           const secondaryConstraints: MediaStreamConstraints = {
-            video: { facingMode: { ideal: 'user' } },
+            video: { facingMode: 'user' },
             audio: false,
           };
-          stream = await navigator.mediaDevices.getUserMedia(secondaryConstraints);
+          stream = await requestMedia(secondaryConstraints);
         } catch (secondErr: any) {
           console.warn("Secondary camera constraints failed, falling back to universal video=true:", secondErr);
           // Strategy 3: Most permissive universal fallback (guaranteed to work on any webcam)
-          stream = await navigator.mediaDevices.getUserMedia({
+          stream = await requestMedia({
             video: true,
             audio: false,
           });
@@ -391,10 +394,8 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           lastAiMessage: "AI Driver Vision active. Connecting camera...",
         }));
       }
-      // If already in monitoring mode (e.g. switching back from simulator or retrying), start stream directly
-      if (isMonitoring) {
-        await startCameraStream();
-      }
+      // Always start camera stream directly to preserve user gesture context
+      await startCameraStream();
     }
   };
 
@@ -598,6 +599,57 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           setIsLowLight(data.metrics.isLowLight);
         }
 
+        const isEyesClosed = data.metrics.isEyelidClosed || (data.metrics.ear < earThreshold && data.metrics.consecutiveClosedFrames >= 4) || data.potentialSafetyEvent === 'PROLONGED_EYE_CLOSURE';
+
+        // ZERO-LATENCY REAL-TIME ON-DEVICE SAFETY ALARM ENGINE:
+        // Sounds critical alarms and warns driver immediately without waiting for network or cloud round-trips
+        if (isEyesClosed) {
+          soundManager.unlockAudioContext();
+          soundManager.playCriticalAlarm(true);
+          soundManager.speakText("Warning! Wake up! Eyes closed detected!", true);
+          setActiveEventTrigger('PROLONGED_EYE_CLOSURE');
+
+          setDriverState(prev => ({
+            ...prev,
+            alertLevel: 'RED',
+            eyesClosed: true,
+            drowsinessLevel: Math.max(prev.drowsinessLevel, 90),
+            safetyScore: Math.max(10, prev.safetyScore - 4),
+            microSleepCount: prev.eyesClosed ? prev.microSleepCount : prev.microSleepCount + 1,
+            lastAiMessage: "CRITICAL ALERT: Prolonged Eye Closure / Micro-Sleep Detected! Pull over safely.",
+          }));
+        } else if (driverStateRef.current.eyesClosed && !isEyesClosed) {
+          // Eyes reopened: gracefully stop alarm siren and restore driver state
+          soundManager.stopAlarm();
+          setActiveEventTrigger(null);
+          setDriverState(prev => ({
+            ...prev,
+            eyesClosed: false,
+            alertLevel: prev.isYawning || prev.isDistracted ? 'YELLOW' : 'GREEN',
+            lastAiMessage: "Driver alert: Eyes reopened. Attentive on road.",
+          }));
+        } else if (data.metrics.isMouthYawning && !driverStateRef.current.isYawning) {
+          soundManager.playWarningBeep();
+          setActiveEventTrigger('YAWNING');
+          setDriverState(prev => ({
+            ...prev,
+            isYawning: true,
+            alertLevel: prev.alertLevel === 'RED' ? 'RED' : 'YELLOW',
+            yawnCount: prev.yawnCount + 1,
+            lastAiMessage: "Warning: Yawning detected. Fatigue accumulating.",
+          }));
+        } else if (data.metrics.isDistracted && !driverStateRef.current.isDistracted) {
+          soundManager.playWarningBeep();
+          setActiveEventTrigger('DISTRACTION');
+          setDriverState(prev => ({
+            ...prev,
+            isDistracted: true,
+            alertLevel: prev.alertLevel === 'RED' ? 'RED' : 'YELLOW',
+            distractionCount: prev.distractionCount + 1,
+            lastAiMessage: "Warning: Looking away from road. Stay focused.",
+          }));
+        }
+
         // EVENT-DRIVEN ARCHITECTURE:
         // When local real-time detection flags a potential safety event,
         // automatically capture the current frame and send ONLY this event to Gemini!
@@ -614,10 +666,10 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
       }
     };
 
-    // Low-resolution off-screen canvas for frame extraction (120x90)
+    // Low-resolution off-screen canvas for frame extraction (160x120 for sharp eye details)
     const analysisCanvas = document.createElement('canvas');
-    analysisCanvas.width = 120;
-    analysisCanvas.height = 90;
+    analysisCanvas.width = 160;
+    analysisCanvas.height = 120;
     const actx = analysisCanvas.getContext('2d', { willReadFrequently: true });
 
     let animationFrameId: number;
@@ -648,14 +700,14 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             lastWorkerSendTimeRef.current = now;
             isWorkerBusyRef.current = true;
 
-            actx.drawImage(video, 0, 0, 120, 90);
-            const imageData = actx.getImageData(0, 0, 120, 90);
+            actx.drawImage(video, 0, 0, 160, 120);
+            const imageData = actx.getImageData(0, 0, 160, 120);
 
             const inputMsg: FaceWorkerInput = {
               type: 'PROCESS_FRAME',
               imageData,
-              width: 120,
-              height: 90,
+              width: 160,
+              height: 120,
               timestamp: now,
             };
             worker.postMessage(inputMsg);
@@ -748,9 +800,11 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           sm.pitch += (metrics.pitch - sm.pitch) * 0.25;
           sm.faceFound = true;
 
-          // Regular state update (every 250ms)
-          if (now - lastStateUpdateRef.current > 250) {
+          // Regular state update (every 200ms)
+          if (now - lastStateUpdateRef.current > 200) {
             lastStateUpdateRef.current = now;
+
+            const isClosed = metrics.isEyelidClosed || (sm.ear < earThreshold && metrics.consecutiveClosedFrames >= 4);
 
             setDriverState(prev => ({
               ...prev,
@@ -758,10 +812,17 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
               ear: Number(sm.ear.toFixed(2)),
               mar: Number(sm.mar.toFixed(2)),
               headTilt: Math.round(sm.yaw),
-              eyesClosed: metrics.isEyelidClosed,
+              eyesClosed: isClosed,
               isYawning: metrics.isMouthYawning,
               isDistracted: metrics.isDistracted,
               abnormalBehavior: metrics.abnormalBehavior,
+              alertLevel: isClosed
+                ? 'RED'
+                : metrics.isMouthYawning || metrics.isDistracted
+                ? 'YELLOW'
+                : prev.alertLevel === 'RED' && !isClosed
+                ? 'GREEN'
+                : prev.alertLevel,
             }));
           }
         } else {
@@ -948,18 +1009,24 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
   }, [isMonitoring, isSimulatorMode, cameraPermission, isMirrored, earThreshold, marThreshold, setDriverState]);
 
   // Test Simulators:
-  // Instead of static dummy toggles, they immediately trigger the full event-driven pipeline:
-  // Event detected -> Frame captured -> Sent to Gemini -> Status & safety score updated -> Alert triggered
+  // Immediately fires the full audio alarm siren, voice synthesis, and event-driven pipeline
   const triggerEyesClosedSimulation = () => {
     soundManager.unlockAudioContext();
+    soundManager.playCriticalAlarm(true);
+    soundManager.speakText("Warning! Wake up! Prolonged eye closure detected!", true);
+    setActiveEventTrigger('PROLONGED_EYE_CLOSURE');
     setDriverState(prev => ({
       ...prev,
+      alertLevel: 'RED',
       eyesClosed: true,
-      ear: 0.10,
-      drowsinessLevel: 85,
+      ear: 0.08,
+      drowsinessLevel: 94,
+      safetyScore: Math.max(10, prev.safetyScore - 5),
+      microSleepCount: prev.microSleepCount + 1,
+      lastAiMessage: "CRITICAL ALERT: Prolonged eye closure / micro-sleep detected!",
     }));
     dispatchSafetyEventToGemini('PROLONGED_EYE_CLOSURE', {
-      ear: 0.10,
+      ear: 0.08,
       mar: 0.12,
       yaw: 0,
       driverPresent: true,
@@ -969,15 +1036,21 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
   const triggerYawnSimulation = () => {
     soundManager.unlockAudioContext();
+    soundManager.playWarningBeep();
+    soundManager.speakText("Fatigue warning: Frequent yawning detected. Consider taking a rest.");
+    setActiveEventTrigger('YAWNING');
     setDriverState(prev => ({
       ...prev,
+      alertLevel: prev.alertLevel === 'RED' ? 'RED' : 'YELLOW',
       isYawning: true,
-      mar: 0.68,
-      drowsinessLevel: Math.min(100, prev.drowsinessLevel + 25),
+      mar: 0.72,
+      drowsinessLevel: Math.min(100, prev.drowsinessLevel + 15),
+      yawnCount: prev.yawnCount + 1,
+      lastAiMessage: "Warning: Yawning detected. Fatigue accumulating.",
     }));
     dispatchSafetyEventToGemini('YAWNING', {
       ear: 0.28,
-      mar: 0.68,
+      mar: 0.72,
       yaw: 0,
       driverPresent: true,
     });
@@ -985,10 +1058,16 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
   const triggerDistractionSimulation = () => {
     soundManager.unlockAudioContext();
+    soundManager.playWarningBeep();
+    soundManager.speakText("Attention: Please keep your eyes focused on the road.");
+    setActiveEventTrigger('DISTRACTION');
     setDriverState(prev => ({
       ...prev,
+      alertLevel: prev.alertLevel === 'RED' ? 'RED' : 'YELLOW',
       isDistracted: true,
       headTilt: 38,
+      distractionCount: prev.distractionCount + 1,
+      lastAiMessage: "Warning: Looking away from road. Stay focused.",
     }));
     dispatchSafetyEventToGemini('DISTRACTION', {
       ear: 0.30,
@@ -1000,9 +1079,14 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
   const triggerNoDriverSimulation = () => {
     soundManager.unlockAudioContext();
+    soundManager.playWarningBeep();
+    soundManager.speakText("Warning: Driver face not detected in camera view.");
+    setActiveEventTrigger('DRIVER_ABSENT');
     setDriverState(prev => ({
       ...prev,
+      alertLevel: 'YELLOW',
       driverPresent: false,
+      lastAiMessage: "Warning: Driver absent from camera view.",
     }));
     dispatchSafetyEventToGemini('DRIVER_ABSENT', {
       driverPresent: false,
@@ -1014,10 +1098,15 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
   const triggerAbnormalPostureSimulation = () => {
     soundManager.unlockAudioContext();
+    soundManager.playCriticalAlarm(true);
+    soundManager.speakText("Warning! Head slump detected. Please sit upright.");
+    setActiveEventTrigger('ABNORMAL_BEHAVIOR');
     setDriverState(prev => ({
       ...prev,
+      alertLevel: 'RED',
       abnormalBehavior: true,
-      headTilt: -25,
+      headTilt: -28,
+      lastAiMessage: "CRITICAL: Head slump / nodding off detected!",
     }));
     dispatchSafetyEventToGemini('ABNORMAL_BEHAVIOR', {
       pitch: 28,
@@ -1141,6 +1230,15 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                       Connect Cam
                     </button>
                   )}
+                  <button
+                    onClick={triggerEyesClosedSimulation}
+                    id="btn-mobile-quick-alarm-test"
+                    className="text-red-300 hover:text-white font-medium text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 border border-red-500/40 flex items-center gap-1 active:scale-95 transition-transform"
+                    title="Test immediate closed eyes alarm"
+                  >
+                    <Bell className="w-2.5 h-2.5 text-red-400" />
+                    <span>Test Alarm</span>
+                  </button>
                   <button
                     onClick={() => setIsMirrored(prev => !prev)}
                     className="p-1 text-slate-300 hover:text-white"
@@ -1404,6 +1502,16 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                     ))}
                   </select>
                 )}
+
+                <button
+                  onClick={triggerEyesClosedSimulation}
+                  id="btn-desktop-quick-alarm-test"
+                  className="px-2 py-0.5 rounded-md bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-white text-[11px] font-medium flex items-center gap-1 transition-all active:scale-95"
+                  title="Test immediate eye closure alarm & voice alert"
+                >
+                  <Bell className="w-3 h-3 text-red-400" />
+                  <span>Test Alarm</span>
+                </button>
 
                 <button
                   onClick={() => setIsMirrored(prev => !prev)}
