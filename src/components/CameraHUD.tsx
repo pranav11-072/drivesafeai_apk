@@ -3,7 +3,8 @@ import {
   Camera, Eye, AlertOctagon, Scan, RefreshCw, Zap, Sparkles,
   CheckCircle2, UserCheck, UserX, Video, VideoOff, FlipHorizontal,
   AlertTriangle, ShieldCheck, ShieldAlert, Sliders, Activity, Cpu,
-  Gauge, Terminal, Layers, Crosshair, ChevronDown, ChevronUp
+  Gauge, Terminal, Layers, Crosshair, ChevronDown, ChevronUp,
+  Play, Square, ExternalLink
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DriverState, AlertLevel, GeminiFrameAnalysisResult } from '../types';
@@ -24,6 +25,7 @@ interface CameraHUDProps {
   driverState: DriverState;
   setDriverState: React.Dispatch<React.SetStateAction<DriverState>>;
   isMonitoring: boolean;
+  onToggleMonitoring?: (forceState?: boolean) => void;
   isMobileMode?: boolean;
 }
 
@@ -41,6 +43,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
   driverState,
   setDriverState,
   isMonitoring,
+  onToggleMonitoring,
   isMobileMode = false,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -159,58 +162,89 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
       }
 
       let stream: MediaStream | null = null;
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        const videoConstraints: MediaTrackConstraints = selectedCameraId
-          ? { deviceId: { exact: selectedCameraId } }
-          : { facingMode: 'user' };
-
-        try {
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              ...videoConstraints,
-              width: { ideal: 640 },
-              height: { ideal: 480 },
-              frameRate: { ideal: 30 },
-            },
-            audio: false,
-          });
-        } catch (idealErr) {
-          console.warn("Retrying with relaxed camera constraints:", idealErr);
-          stream = await navigator.mediaDevices.getUserMedia({
-            video: true,
-            audio: false,
-          });
+      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        // Strategy 1: Specific camera if user picked one
+        if (selectedCameraId) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { deviceId: { exact: selectedCameraId } },
+              audio: false,
+            });
+          } catch (devErr) {
+            console.warn("Specific camera deviceId failed, falling back to front/user camera:", devErr);
+          }
         }
+
+        // Strategy 2: Ideal front/user facing camera with 640x480 resolution
+        if (!stream) {
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: {
+                facingMode: 'user',
+                width: { ideal: 640 },
+                height: { ideal: 480 },
+                frameRate: { ideal: 30 },
+              },
+              audio: false,
+            });
+          } catch (idealErr) {
+            console.warn("Retrying camera with relaxed facingMode user:", idealErr);
+            try {
+              stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user' },
+                audio: false,
+              });
+            } catch (facingErr) {
+              console.warn("Retrying with minimal video=true:", facingErr);
+              // Strategy 3: Most permissive constraint
+              stream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: false,
+              });
+            }
+          }
+        }
+      } else {
+        throw new Error("Camera API is not supported in this browser context (requires HTTPS or modern browser).");
       }
 
       if (stream) {
         activeStreamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          videoRef.current.onloadedmetadata = () => {
-            videoRef.current?.play().catch(e => console.warn("Video play catch:", e));
-          };
-          videoRef.current.play().catch(e => console.warn("Direct play catch:", e));
+          try {
+            await videoRef.current.play();
+          } catch (playErr) {
+            console.warn("Video auto-play deferred until user interaction:", playErr);
+          }
         }
         setCameraPermission(true);
         setIsSimulatorMode(false);
+        setStreamError(null);
+
+        // Re-enumerate to get labeled devices now that permission is granted
+        if (navigator.mediaDevices?.enumerateDevices) {
+          navigator.mediaDevices.enumerateDevices().then(devices => {
+            const videoDevices = devices.filter(d => d.kind === 'videoinput');
+            setAvailableCameras(videoDevices);
+          }).catch(() => {});
+        }
       } else {
-        throw new Error("No media stream returned.");
+        throw new Error("No video media stream could be opened.");
       }
     } catch (err: any) {
       console.warn("Camera access error:", err);
       setCameraPermission(false);
-      setIsSimulatorMode(true);
       
-      let errorMsg = "Webcam not accessible. Virtual Driver Simulator is active.";
+      let errorMsg = "Webcam not accessible. You can use the Virtual Driver Simulator or open in a full tab.";
       if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-        errorMsg = "Camera permission denied in browser settings. Running in Virtual Driver Simulator mode.";
+        errorMsg = "Camera permission was denied by browser or iframe policy. Click 'Open in New Tab' to grant camera permissions directly, or switch to Virtual Simulator.";
       } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
-        errorMsg = "No camera found on this device. Running in Virtual Driver Simulator mode.";
+        errorMsg = "No webcam hardware detected on this device. You can test safety alerts in Virtual Simulator mode.";
       } else if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError') {
-        errorMsg = "Camera is currently in use by another application or locked. Running in simulator mode.";
-      } else if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
-        errorMsg = "Camera API is not supported on this browser or connection is non-HTTPS. Running in simulator mode.";
+        errorMsg = "Camera hardware is currently in use by another program (e.g. Zoom, Teams, Meet) or locked.";
+      } else if (err?.name === 'SecurityError') {
+        errorMsg = "Camera access restricted inside iframe. Click 'Open in New Tab' to grant full camera permissions.";
       }
       setStreamError(errorMsg);
     }
@@ -218,9 +252,9 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
   // Manage camera lifecycle based on isMonitoring state
   useEffect(() => {
-    if (isMonitoring) {
+    if (isMonitoring && !isSimulatorMode) {
       startCameraStream();
-    } else {
+    } else if (!isMonitoring) {
       if (activeStreamRef.current) {
         activeStreamRef.current.getTracks().forEach(track => track.stop());
         activeStreamRef.current = null;
@@ -239,7 +273,78 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         activeStreamRef.current = null;
       }
     };
-  }, [isMonitoring, startCameraStream]);
+  }, [isMonitoring, isSimulatorMode, startCameraStream]);
+
+  // Synchronize active media stream with videoRef when mounted or state updates
+  useEffect(() => {
+    if (activeStreamRef.current && videoRef.current && videoRef.current.srcObject !== activeStreamRef.current) {
+      videoRef.current.srcObject = activeStreamRef.current;
+      videoRef.current.play().catch(e => console.warn("Video stream attach error:", e));
+    }
+  });
+
+  const handleStartCamera = async (forceSimulator: boolean = false) => {
+    soundManager.unlockAudioContext();
+    setStreamError(null);
+    if (forceSimulator) {
+      setIsSimulatorMode(true);
+      if (activeStreamRef.current) {
+        activeStreamRef.current.getTracks().forEach(track => track.stop());
+        activeStreamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+      if (onToggleMonitoring) {
+        onToggleMonitoring(true);
+      } else {
+        setDriverState(prev => ({
+          ...prev,
+          isMonitoring: true,
+          lastAiMessage: "AI Driver Virtual Simulator active.",
+        }));
+      }
+    } else {
+      setIsSimulatorMode(false);
+      if (onToggleMonitoring) {
+        onToggleMonitoring(true);
+      } else {
+        setDriverState(prev => ({
+          ...prev,
+          isMonitoring: true,
+          lastAiMessage: "AI Driver Vision active. Connecting camera...",
+        }));
+      }
+      await startCameraStream();
+    }
+  };
+
+  const handleStopCamera = () => {
+    soundManager.unlockAudioContext();
+    if (activeStreamRef.current) {
+      activeStreamRef.current.getTracks().forEach(track => track.stop());
+      activeStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setCameraPermission(null);
+    if (onToggleMonitoring) {
+      onToggleMonitoring(false);
+    } else {
+      setDriverState(prev => ({
+        ...prev,
+        isMonitoring: false,
+        lastAiMessage: "Driver monitoring stopped.",
+      }));
+    }
+  };
+
+  const handleOpenInNewTab = () => {
+    if (typeof window !== 'undefined') {
+      window.open(window.location.href, '_blank');
+    }
+  };
 
   // Helper: Capture current frame as base64 JPEG
   const captureCurrentFrame = useCallback((): string => {
@@ -602,8 +707,8 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           const H = overlay.height;
           frameCounterRef.current += 1;
 
-          // 3A. ISO 12233 Optical Calibration Grid (when simulator or camera offline)
-          if (isSimulatorMode || !cameraPermission) {
+          // 3A. ISO 12233 Optical Calibration Grid (ONLY when virtual simulator is active without live camera stream)
+          if (isSimulatorMode && !activeStreamRef.current) {
             renderOpticalTestBench(octx, W, H);
           }
 
@@ -881,25 +986,28 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
         {/* Video / Camera Canvas Container */}
         <div className="relative w-full aspect-video bg-slate-950/95 rounded-2xl overflow-hidden border border-white/15 shadow-inner flex items-center justify-center">
+          {/* Live Camera Video Feed (always mounted so videoRef is constantly bound) */}
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            onLoadedMetadata={(e) => {
+              e.currentTarget.play().catch(err => console.warn("Video play catch:", err));
+            }}
+            className={`w-full h-full object-cover transition-opacity duration-200 ${isMirrored ? 'transform -scale-x-100' : ''} ${
+              !isMonitoring || isSimulatorMode || !activeStreamRef.current ? 'opacity-0' : 'opacity-100'
+            }`}
+          />
+
+          {/* Real-Time Facial Landmarks Overlay Canvas */}
+          <canvas
+            ref={overlayCanvasRef}
+            className="absolute inset-0 w-full h-full pointer-events-none z-10"
+          />
+
           {isMonitoring ? (
             <>
-              {/* Live Camera Video Feed */}
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className={`w-full h-full object-cover ${isMirrored ? 'transform -scale-x-100' : ''} ${
-                  isSimulatorMode || !cameraPermission ? 'opacity-0' : 'opacity-100'
-                }`}
-              />
-
-              {/* Real-Time Facial Landmarks Overlay Canvas */}
-              <canvas
-                ref={overlayCanvasRef}
-                className="absolute inset-0 w-full h-full pointer-events-none z-10"
-              />
-
               {/* Compact Mode Top Telematics Ribbon */}
               <div className="absolute top-0 inset-x-0 z-20 h-8 backdrop-blur-xl bg-slate-950/80 border-b border-white/10 px-2.5 flex items-center justify-between text-[11px]">
                 <span className={`flex items-center gap-1.5 px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase ${
@@ -922,14 +1030,26 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                 <div className="flex items-center gap-1.5">
                   {isSimulatorMode ? (
                     <button
-                      onClick={startCameraStream}
+                      onClick={() => handleStartCamera(false)}
+                      className="text-sky-400 hover:text-sky-300 font-medium text-[10px] px-1.5 py-0.5 rounded bg-sky-500/10 border border-sky-500/20 flex items-center gap-1"
+                      title="Connect physical camera"
+                    >
+                      <Video className="w-2.5 h-2.5" />
+                      <span>Connect Cam</span>
+                    </button>
+                  ) : activeStreamRef.current ? (
+                    <span className="text-emerald-400 font-mono text-[10px] flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                      LIVE
+                    </span>
+                  ) : (
+                    <button
+                      onClick={() => handleStartCamera(false)}
                       className="text-sky-400 hover:text-sky-300 font-medium text-[10px] px-1.5 py-0.5 rounded bg-sky-500/10 border border-sky-500/20"
-                      title="Retry live camera feed"
+                      title="Retry camera connection"
                     >
                       Connect Cam
                     </button>
-                  ) : (
-                    <span className="text-emerald-400 font-mono text-[10px]">LIVE</span>
                   )}
                   <button
                     onClick={() => setIsMirrored(prev => !prev)}
@@ -938,8 +1058,50 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                   >
                     <FlipHorizontal className="w-3 h-3" />
                   </button>
+                  <button
+                    onClick={handleStopCamera}
+                    className="p-1 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded"
+                    title="Turn Camera Off (Standby)"
+                  >
+                    <Square className="w-3 h-3 fill-current" />
+                  </button>
                 </div>
               </div>
+
+              {/* Stream Error Modal Overlay inside video frame if error occurs */}
+              {streamError && (
+                <div className="absolute inset-0 z-30 backdrop-blur-md bg-slate-950/90 flex flex-col items-center justify-center p-3 text-center">
+                  <div className="w-9 h-9 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center mb-1 text-amber-400">
+                    <VideoOff className="w-5 h-5" />
+                  </div>
+                  <p className="text-xs font-bold text-white uppercase">Camera Blocked or Not Found</p>
+                  <p className="text-[10px] text-amber-300/90 mt-0.5 mb-2 line-clamp-2">{streamError}</p>
+                  <div className="flex flex-wrap items-center justify-center gap-1.5">
+                    <button
+                      onClick={() => handleStartCamera(false)}
+                      className="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded-lg text-[10px] font-bold"
+                    >
+                      Retry Permission
+                    </button>
+                    <button
+                      onClick={handleOpenInNewTab}
+                      className="px-2 py-1 bg-white/10 hover:bg-white/20 text-white rounded-lg text-[10px] flex items-center gap-1"
+                    >
+                      <ExternalLink className="w-3 h-3 text-sky-400" />
+                      <span>New Tab</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setStreamError(null);
+                        handleStartCamera(true);
+                      }}
+                      className="px-2 py-1 bg-amber-500/20 text-amber-300 rounded-lg text-[10px]"
+                    >
+                      Use Simulator
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {/* Critical Alert Flasher */}
               <AnimatePresence>
@@ -966,31 +1128,45 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
               </AnimatePresence>
             </>
           ) : (
-            <div className="text-center p-6 text-slate-400 flex flex-col items-center">
-              <Camera className="w-10 h-10 text-slate-500 mb-2" />
-              <p className="text-xs font-semibold text-slate-300">Driver Camera Standby</p>
+            <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-4 text-center backdrop-blur-md bg-slate-950/95">
+              <div className="relative mb-2">
+                <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-blue-600/30 to-sky-500/20 border border-sky-400/50 flex items-center justify-center shadow-lg shadow-sky-950/80">
+                  <Camera className="w-5 h-5 text-sky-400" />
+                </div>
+              </div>
+              <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-900 border border-slate-700 text-[10px] font-mono text-slate-300 mb-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+                <span>CAMERA OFF (STANDBY)</span>
+              </div>
+              <p className="text-xs font-bold text-white">Turn on camera to monitor driver fatigue</p>
+              <div className="mt-3 flex items-center gap-2 w-full max-w-xs justify-center">
+                <button
+                  onClick={() => handleStartCamera(false)}
+                  id="btn-mobile-start-camera"
+                  className="px-4 py-2 bg-gradient-to-r from-blue-600 to-sky-600 hover:from-blue-500 hover:to-sky-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-900/50 flex items-center gap-1.5"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>Start Camera</span>
+                </button>
+                <button
+                  onClick={() => handleStartCamera(true)}
+                  id="btn-mobile-virtual-mode"
+                  className="px-3 py-2 bg-white/10 hover:bg-white/15 text-slate-200 rounded-xl text-xs font-medium border border-white/10 flex items-center gap-1"
+                >
+                  <Sparkles className="w-3 h-3 text-amber-400" />
+                  <span>Virtual Mode</span>
+                </button>
+              </div>
               <button
-                onClick={() => setDriverState(prev => ({ ...prev, isMonitoring: true }))}
-                className="mt-2.5 px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-blue-900/50 transition-colors"
+                onClick={handleOpenInNewTab}
+                className="mt-2 text-[10px] text-sky-400 hover:text-sky-300 underline flex items-center gap-1"
               >
-                Start Camera Feed
+                <span>Open in New Tab if Camera Blocked</span>
+                <ExternalLink className="w-2.5 h-2.5" />
               </button>
             </div>
           )}
         </div>
-
-        {/* Stream Error Notice if applicable */}
-        {streamError && isMonitoring && (
-          <div className="mt-2 px-3 py-1.5 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-[11px] flex items-center justify-between">
-            <span className="truncate">{streamError}</span>
-            <button
-              onClick={startCameraStream}
-              className="underline text-amber-200 hover:text-white font-medium ml-2 text-[11px] shrink-0"
-            >
-              Retry
-            </button>
-          </div>
-        )}
 
         {/* Prominent Attentiveness State Badge */}
         <div className="mt-3 flex items-center justify-center">
@@ -1021,25 +1197,28 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-4 shadow-2xl shadow-black/50 flex flex-col justify-between h-full">
       {/* Video / Camera Canvas Container */}
       <div className="relative w-full aspect-video bg-slate-950/90 rounded-2xl overflow-hidden border border-white/10 flex items-center justify-center">
+        {/* Live Camera Video Feed (always mounted so videoRef is constantly bound) */}
+        <video
+          ref={videoRef}
+          autoPlay
+          playsInline
+          muted
+          onLoadedMetadata={(e) => {
+            e.currentTarget.play().catch(err => console.warn("Video play catch:", err));
+          }}
+          className={`w-full h-full object-cover transition-opacity duration-200 ${isMirrored ? 'transform -scale-x-100' : ''} ${
+            !isMonitoring || isSimulatorMode || !activeStreamRef.current ? 'opacity-0' : 'opacity-100'
+          }`}
+        />
+
+        {/* Real-Time Facial Landmarks Overlay Canvas */}
+        <canvas
+          ref={overlayCanvasRef}
+          className="absolute inset-0 w-full h-full pointer-events-none z-10"
+        />
+
         {isMonitoring ? (
           <>
-            {/* Live Camera Video Feed */}
-            <video
-              ref={videoRef}
-              autoPlay
-              playsInline
-              muted
-              className={`w-full h-full object-cover ${isMirrored ? 'transform -scale-x-100' : ''} ${
-                isSimulatorMode || !cameraPermission ? 'opacity-0' : 'opacity-100'
-              }`}
-            />
-
-            {/* Real-Time Facial Landmarks Overlay Canvas */}
-            <canvas
-              ref={overlayCanvasRef}
-              className="absolute inset-0 w-full h-full pointer-events-none z-10"
-            />
-
             {/* Integrated Sleek Edge-to-Edge Glass Telematics Bar */}
             <div className="absolute top-0 inset-x-0 z-20 h-9 backdrop-blur-xl bg-slate-950/80 border-b border-white/10 px-3 flex items-center justify-between text-xs">
               {/* Left: Driver Presence & Status Badge */}
@@ -1074,20 +1253,51 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
               {/* Right: Camera Source & Quick Controls */}
               <div className="flex items-center gap-1.5">
-                {cameraPermission && !isSimulatorMode ? (
-                  <div className="flex items-center gap-1 text-[11px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-md border border-emerald-500/20 font-medium">
-                    <Video className="w-3 h-3" />
-                    <span>Live Cam</span>
+                {activeStreamRef.current && !isSimulatorMode ? (
+                  <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-md border border-emerald-500/20 font-medium">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
+                    <span>Live Webcam</span>
+                  </div>
+                ) : isSimulatorMode ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="flex items-center gap-1 text-[11px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20 font-medium">
+                      <Sparkles className="w-3 h-3 text-amber-400" />
+                      <span>Simulator</span>
+                    </span>
+                    <button
+                      onClick={() => handleStartCamera(false)}
+                      className="flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 px-2 py-0.5 rounded-md border border-sky-500/30 transition-all font-medium"
+                      title="Switch to live physical camera"
+                    >
+                      <Video className="w-3 h-3 text-sky-400" />
+                      <span>Connect Cam</span>
+                    </button>
                   </div>
                 ) : (
                   <button
-                    onClick={startCameraStream}
+                    onClick={() => handleStartCamera(false)}
                     className="flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 bg-sky-500/10 hover:bg-sky-500/20 px-2 py-0.5 rounded-md border border-sky-500/30 transition-all font-medium"
                     title="Connect physical camera"
                   >
                     <VideoOff className="w-3 h-3 text-amber-400" />
                     <span>Connect Live Cam</span>
                   </button>
+                )}
+
+                {/* Multiple Camera Device Picker */}
+                {availableCameras.length > 1 && (
+                  <select
+                    value={selectedCameraId}
+                    onChange={(e) => setSelectedCameraId(e.target.value)}
+                    className="bg-slate-900/90 text-slate-200 border border-white/10 rounded px-1.5 py-0.5 text-[10px] focus:outline-none focus:border-sky-400 max-w-[120px] truncate"
+                    title="Select video input device"
+                  >
+                    {availableCameras.map(cam => (
+                      <option key={cam.deviceId} value={cam.deviceId}>
+                        {cam.label || `Camera ${cam.deviceId.slice(0, 5)}`}
+                      </option>
+                    ))}
+                  </select>
                 )}
 
                 <button
@@ -1101,8 +1311,61 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                 >
                   <FlipHorizontal className="w-3.5 h-3.5" />
                 </button>
+
+                <button
+                  onClick={handleStopCamera}
+                  className="px-2 py-0.5 rounded-md bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 text-red-300 hover:text-white text-[11px] font-medium flex items-center gap-1 transition-colors"
+                  title="Pause Camera & Driver Monitoring"
+                >
+                  <Square className="w-2.5 h-2.5 fill-current" />
+                  <span>Stop</span>
+                </button>
               </div>
             </div>
+
+            {/* Stream Error Modal Overlay inside video frame if error occurs */}
+            {streamError && (
+              <div className="absolute inset-0 z-30 backdrop-blur-md bg-slate-950/90 flex flex-col items-center justify-center p-6 text-center">
+                <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center mb-3 text-amber-400 shadow-lg shadow-amber-950/50">
+                  <VideoOff className="w-6 h-6" />
+                </div>
+                <h4 className="text-base font-bold text-white uppercase tracking-wider mb-1">
+                  Camera Access Not Available
+                </h4>
+                <p className="text-xs text-amber-200/90 max-w-md mb-4 font-mono leading-relaxed">
+                  {streamError}
+                </p>
+
+                <div className="flex flex-wrap items-center justify-center gap-2.5">
+                  <button
+                    onClick={() => handleStartCamera(false)}
+                    className="px-4 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow-lg shadow-sky-950/50 flex items-center gap-1.5 transition-colors"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Retry Camera Permission</span>
+                  </button>
+
+                  <button
+                    onClick={handleOpenInNewTab}
+                    className="px-3.5 py-2 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-white text-xs font-medium flex items-center gap-1.5 transition-colors"
+                  >
+                    <ExternalLink className="w-3.5 h-3.5 text-sky-400" />
+                    <span>Open in New Tab</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setStreamError(null);
+                      handleStartCamera(true);
+                    }}
+                    className="px-3.5 py-2 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 text-xs font-medium flex items-center gap-1.5 transition-colors"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Continue in Virtual Simulator</span>
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Active Gemini Event Analysis Banner */}
             <AnimatePresence>
@@ -1156,12 +1419,63 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             </AnimatePresence>
           </>
         ) : (
-          <div className="text-center p-6 text-slate-400 flex flex-col items-center">
-            <Camera className="w-12 h-12 text-slate-500 mb-2" />
-            <p className="text-sm font-medium text-slate-300">Driver Safety Camera Standby</p>
-            <p className="text-xs text-slate-400 mt-1 max-w-xs">
-              Click &quot;Start Monitor&quot; to activate local computer vision and Gemini safety event analysis.
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center p-6 text-center backdrop-blur-md bg-slate-950/95">
+            {/* Glowing camera radar ring */}
+            <div className="relative mb-3 flex items-center justify-center">
+              <div className="absolute w-24 h-24 rounded-full border border-sky-500/20 animate-ping pointer-events-none" />
+              <div className="absolute w-20 h-20 rounded-full border border-blue-500/30 animate-pulse pointer-events-none" />
+              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-600/30 to-sky-500/20 border border-sky-400/40 flex items-center justify-center shadow-xl shadow-sky-950/60">
+                <Camera className="w-8 h-8 text-sky-400" />
+              </div>
+            </div>
+
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 border border-slate-700/80 text-[11px] font-mono text-slate-300 mb-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+              <span>CAMERA STATUS: OFF (STANDBY)</span>
+            </div>
+
+            <h3 className="text-lg font-black text-white tracking-wide uppercase">
+              Driver Safety Camera Monitor
+            </h3>
+            <p className="text-xs text-slate-400 mt-1 max-w-md leading-relaxed">
+              Monitors eyelid closures (EAR &lt; 0.20), yawns (MAR &gt; 0.65), head tilt, and distracted driving locally on your device.
             </p>
+
+            <div className="mt-4 flex flex-col sm:flex-row items-center gap-3 w-full max-w-sm justify-center">
+              <button
+                onClick={() => handleStartCamera(false)}
+                id="btn-desktop-turn-on-camera"
+                className="w-full sm:w-auto flex-1 py-2.5 px-5 bg-gradient-to-r from-blue-600 to-sky-600 hover:from-blue-500 hover:to-sky-500 text-white rounded-xl text-sm font-bold shadow-xl shadow-blue-900/50 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] active:scale-[0.98]"
+              >
+                <Play className="w-4 h-4 fill-current" />
+                <span>Turn On Camera</span>
+              </button>
+
+              <button
+                onClick={() => handleStartCamera(true)}
+                id="btn-desktop-virtual-mode"
+                className="w-full sm:w-auto py-2.5 px-4 bg-white/10 hover:bg-white/15 text-slate-200 rounded-xl text-xs font-semibold border border-white/15 flex items-center justify-center gap-1.5 transition-colors"
+                title="Test drowsiness alerts without webcam"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span>Virtual Simulator</span>
+              </button>
+            </div>
+
+            <div className="mt-3 flex items-center gap-3 text-[11px] text-slate-400">
+              <span className="flex items-center gap-1 text-emerald-400/90">
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>100% Private On-Device Vision</span>
+              </span>
+              <span>•</span>
+              <button
+                onClick={handleOpenInNewTab}
+                className="text-sky-400 hover:text-sky-300 underline flex items-center gap-1 font-medium"
+              >
+                <span>Open in New Tab if Camera Blocked</span>
+                <ExternalLink className="w-3 h-3" />
+              </button>
+            </div>
           </div>
         )}
       </div>

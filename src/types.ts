@@ -35,7 +35,7 @@ export interface GeminiFrameAnalysisResult {
   configured?: boolean;
 }
 
-export type GpsStatus = 'loading' | 'active' | 'denied' | 'unavailable';
+export type GpsStatus = 'loading' | 'active' | 'denied' | 'unavailable' | 'simulated';
 
 export interface SpeedData {
   currentSpeedKmh: number | null;
@@ -50,7 +50,7 @@ export interface SpeedData {
   locationName: string;
   gpsStatus: GpsStatus;
   gpsErrorMessage?: string | null;
-  speedSource: 'gps' | 'manual' | 'none';
+  speedSource: 'gps' | 'manual' | 'random' | 'none';
   lastGpsUpdate?: number;
 }
 

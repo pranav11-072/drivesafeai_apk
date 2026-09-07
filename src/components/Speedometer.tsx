@@ -8,6 +8,11 @@ import {
   Lock,
   RefreshCw,
   AlertTriangle,
+  Play,
+  Pause,
+  Zap,
+  Car,
+  Sparkles,
 } from 'lucide-react';
 import { SpeedData } from '../types';
 import { soundManager } from '../utils/audio';
@@ -22,6 +27,11 @@ interface SpeedometerProps {
   onToggleManualOverride?: (enabled: boolean) => void;
   manualSpeedKmh?: number;
   onSetManualSpeed?: (speed: number) => void;
+  isRandomRunning?: boolean;
+  onToggleRandomRunning?: (enabled: boolean) => void;
+  randomSpeedProfile?: 'random' | 'city' | 'highway' | 'cruising';
+  onSetRandomSpeedProfile?: (profile: 'random' | 'city' | 'highway' | 'cruising') => void;
+  onTriggerOverspeedBurst?: () => void;
 }
 
 export const Speedometer: React.FC<SpeedometerProps> = ({
@@ -33,11 +43,17 @@ export const Speedometer: React.FC<SpeedometerProps> = ({
   onToggleManualOverride,
   manualSpeedKmh = 0,
   onSetManualSpeed,
+  isRandomRunning = true,
+  onToggleRandomRunning,
+  randomSpeedProfile = 'random',
+  onSetRandomSpeedProfile,
+  onTriggerOverspeedBurst,
 }) => {
   const isGpsActive = speedData.gpsStatus === 'active';
   const isGpsLoading = speedData.gpsStatus === 'loading';
   const isGpsDenied = speedData.gpsStatus === 'denied';
   const isGpsUnavailable = speedData.gpsStatus === 'unavailable';
+  const isSimulated = speedData.speedSource === 'random' || speedData.gpsStatus === 'simulated';
   const isSpeedAvailable = speedData.isSpeedAvailable && speedData.currentSpeedKmh !== null;
 
   // Toggle speed limit presets (50, 60, 80, 100, 120 km/h)
@@ -82,7 +98,7 @@ export const Speedometer: React.FC<SpeedometerProps> = ({
 
   return (
     <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-4 shadow-2xl shadow-black/50 flex flex-col justify-between h-full relative overflow-hidden">
-      {/* Top Header with GPS Status */}
+      {/* Top Header with GPS / Random Simulation Status */}
       <div className="flex items-center justify-between border-b border-white/10 pb-2.5 mb-2 gap-2 flex-wrap">
         <div className="flex items-center gap-2 text-white font-semibold text-sm">
           <div className="p-1.5 bg-blue-500/20 rounded-lg border border-blue-400/30 text-blue-400">
@@ -91,9 +107,18 @@ export const Speedometer: React.FC<SpeedometerProps> = ({
           <span>Live Vehicle Speed</span>
         </div>
 
-        {/* Dynamic GPS Status Pill */}
+        {/* Dynamic Telematics Status Pill */}
         <div className="flex items-center gap-1.5">
-          {isGpsActive ? (
+          {isSimulated && !isManualOverride ? (
+            <span
+              id="gps-status-simulated"
+              className="text-[11px] px-2.5 py-1 rounded-full font-bold flex items-center gap-1.5 bg-gradient-to-r from-sky-500/20 to-blue-500/20 text-sky-300 border border-sky-500/40 shadow-[0_0_10px_rgba(56,189,248,0.25)] font-mono"
+              title="Speedometer running live random automotive simulation"
+            >
+              <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse"></span>
+              <span>Random Drive Sim</span>
+            </span>
+          ) : isGpsActive ? (
             <span
               id="gps-status-active"
               className="text-[11px] px-2.5 py-1 rounded-full font-bold flex items-center gap-1.5 bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-[0_0_8px_rgba(16,185,129,0.3)] font-mono"
@@ -128,7 +153,7 @@ export const Speedometer: React.FC<SpeedometerProps> = ({
               className="text-[11px] px-2.5 py-1 rounded-full font-bold flex items-center gap-1.5 bg-slate-800/80 text-slate-300 border border-slate-700 font-mono"
             >
               <AlertTriangle className="w-3 h-3 text-amber-400" />
-              <span>GPS Unavailable</span>
+              <span>GPS Offline</span>
             </span>
           )}
         </div>
@@ -216,6 +241,8 @@ export const Speedometer: React.FC<SpeedometerProps> = ({
               stroke={
                 speedData.isOverSpeed
                   ? '#ef4444'
+                  : isSimulated && !isManualOverride
+                  ? '#38bdf8'
                   : isGpsActive
                   ? '#10b981'
                   : isManualOverride
@@ -243,6 +270,8 @@ export const Speedometer: React.FC<SpeedometerProps> = ({
                   className={`text-5xl font-black font-mono tracking-tight transition-all ${
                     speedData.isOverSpeed
                       ? 'text-red-400 drop-shadow-[0_0_12px_rgba(239,68,68,0.8)] animate-pulse'
+                      : isSimulated && !isManualOverride
+                      ? 'text-sky-300 drop-shadow-[0_0_12px_rgba(56,189,248,0.6)]'
                       : isGpsActive
                       ? 'text-white drop-shadow-[0_0_12px_rgba(16,185,129,0.5)]'
                       : 'text-amber-300'
@@ -262,7 +291,9 @@ export const Speedometer: React.FC<SpeedometerProps> = ({
             )}
 
             <span className="text-[9px] uppercase tracking-widest font-bold mt-1 text-slate-500">
-              {isGpsActive
+              {isSimulated && !isManualOverride
+                ? 'RANDOM CRUISE SIM'
+                : isGpsActive
                 ? 'ACTUAL GPS'
                 : isManualOverride
                 ? 'MANUAL TEST OVERRIDE'
@@ -299,9 +330,70 @@ export const Speedometer: React.FC<SpeedometerProps> = ({
         </div>
       )}
 
-      {/* Manual Speed Bench-Test Control */}
-      <div className="backdrop-blur-md bg-white/5 rounded-xl p-2.5 border border-white/10 space-y-1.5 mb-2">
-        <div className="flex justify-between items-center text-xs text-slate-300 font-medium">
+      {/* Random Speed & Manual Drive Control Bench */}
+      <div className="backdrop-blur-md bg-white/5 rounded-xl p-2.5 border border-white/10 space-y-2 mb-2">
+        {/* Row 1: Random Speed Generator Controls */}
+        <div className="flex items-center justify-between gap-2 flex-wrap pb-1.5 border-b border-white/5">
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => onToggleRandomRunning && onToggleRandomRunning(!isRandomRunning)}
+              id="btn-toggle-random-speed"
+              title={isRandomRunning ? "Pause random driving speed" : "Start random driving speed"}
+              className={`px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-all ${
+                isRandomRunning && !isManualOverride
+                  ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40 hover:bg-sky-500/30'
+                  : 'bg-slate-800 text-slate-400 border border-white/10 hover:text-white'
+              }`}
+            >
+              {isRandomRunning && !isManualOverride ? (
+                <>
+                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping" />
+                  <Pause className="w-2.5 h-2.5" />
+                  <span>Random Active</span>
+                </>
+              ) : (
+                <>
+                  <Play className="w-2.5 h-2.5 text-emerald-400" />
+                  <span>Run Randomly</span>
+                </>
+              )}
+            </button>
+
+            {onTriggerOverspeedBurst && (
+              <button
+                onClick={onTriggerOverspeedBurst}
+                id="btn-trigger-overspeed"
+                title="Accelerate past speed limit for 6 seconds to test warning alerts"
+                className="px-2 py-1 rounded-lg text-[10px] font-bold flex items-center gap-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/30 transition-colors"
+              >
+                <Zap className="w-2.5 h-2.5 text-amber-400" />
+                <span>Test Overspeed</span>
+              </button>
+            )}
+          </div>
+
+          {/* Drive Profile Selector */}
+          {onSetRandomSpeedProfile && (
+            <div className="flex items-center gap-1 text-[9px] font-mono">
+              {(['random', 'city', 'cruising', 'highway'] as const).map(p => (
+                <button
+                  key={p}
+                  onClick={() => onSetRandomSpeedProfile(p)}
+                  className={`px-1.5 py-0.5 rounded capitalize transition-all ${
+                    randomSpeedProfile === p && isRandomRunning && !isManualOverride
+                      ? 'bg-sky-500 text-slate-950 font-bold'
+                      : 'bg-slate-800/80 text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {p === 'cruising' ? 'cruise' : p}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Row 2: Manual Speed Override Slider */}
+        <div className="flex justify-between items-center text-xs text-slate-300 font-medium pt-0.5">
           <label className="flex items-center gap-2 cursor-pointer">
             <input
               type="checkbox"
@@ -312,22 +404,24 @@ export const Speedometer: React.FC<SpeedometerProps> = ({
             />
             <span className="flex items-center gap-1 text-[11px]">
               <Sliders className="w-3 h-3 text-amber-400" />
-              <span>Manual Test Override</span>
+              <span>Manual Slider</span>
             </span>
           </label>
 
           <span className="font-mono text-[11px] text-slate-300">
             {isManualOverride ? (
-              <span className="text-amber-300 font-bold">{speedData.currentSpeedKmh} km/h (Test)</span>
-            ) : isSpeedAvailable ? (
+              <span className="text-amber-300 font-bold">{speedData.currentSpeedKmh} km/h (Manual)</span>
+            ) : isSimulated ? (
+              <span className="text-sky-300 font-bold">{speedData.currentSpeedKmh} km/h (Random)</span>
+            ) : isGpsActive ? (
               <span className="text-emerald-400 font-bold">{speedData.currentSpeedKmh} km/h (GPS)</span>
             ) : (
-              <span className="text-slate-400">Speed unavailable</span>
+              <span className="text-slate-400">Offline</span>
             )}
           </span>
         </div>
 
-        {isManualOverride ? (
+        {isManualOverride && (
           <div>
             <input
               type="range"
@@ -339,19 +433,9 @@ export const Speedometer: React.FC<SpeedometerProps> = ({
               className="w-full accent-amber-400 h-1.5 bg-slate-800/80 rounded-lg cursor-pointer"
             />
             <p className="text-[10px] text-amber-300/80 mt-1 text-center font-mono">
-              Test mode active: Drag slider to test overspeed alerts ({speedData.speedLimitKmh} km/h limit)
+              Manual mode: Drag slider to test overspeed alerts ({speedData.speedLimitKmh} km/h limit)
             </p>
           </div>
-        ) : (
-          <p className="text-[10px] text-slate-400">
-            {isGpsActive
-              ? "Live vehicle speed calculated directly from actual GPS updates."
-              : isGpsDenied
-              ? "Location permission was denied — speed unavailable."
-              : isGpsLoading
-              ? "Acquiring satellite fix from device GPS..."
-              : "GPS sensor unavailable."}
-          </p>
         )}
       </div>
 

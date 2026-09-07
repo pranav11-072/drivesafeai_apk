@@ -29,8 +29,100 @@ export function useGpsTracker(options?: UseGpsTrackerOptions) {
   const [isManualOverride, setIsManualOverride] = useState(false);
   const [manualSpeedKmh, setManualSpeedKmh] = useState<number>(0);
 
+  // Random Speed Simulation Engine (Active by default so speedometer works out of the box)
+  const [isRandomRunning, setIsRandomRunning] = useState<boolean>(true);
+  const [randomSpeedProfile, setRandomSpeedProfile] = useState<'random' | 'city' | 'highway' | 'cruising'>('random');
+  const [randomSpeedKmh, setRandomSpeedKmh] = useState<number>(56);
+  const [simCoords, setSimCoords] = useState<{ lat: number; lng: number; heading: number }>({
+    lat: 37.7749,
+    lng: -122.4194,
+    heading: 245,
+  });
+
+  const targetSpeedRef = useRef<number>(58);
+  const currentSpeedFloatRef = useRef<number>(56);
+  const lastTargetChangeRef = useRef<number>(Date.now());
+  const overspeedBurstUntilRef = useRef<number>(0);
+
   const prevFixRef = useRef<PreviousGpsFix | null>(null);
   const watchIdRef = useRef<number | null>(null);
+
+  // Method to trigger a temporary overspeed burst for testing alarms
+  const triggerOverspeedBurst = useCallback((durationMs: number = 6000) => {
+    overspeedBurstUntilRef.current = Date.now() + durationMs;
+    const limit = options?.speedLimitKmh || 60;
+    targetSpeedRef.current = limit + 18;
+  }, [options?.speedLimitKmh]);
+
+  // Active random driving simulation loop
+  useEffect(() => {
+    if (!isRandomRunning || isManualOverride) return;
+
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const limit = options?.speedLimitKmh || 60;
+
+      // Check if temporary overspeed burst is active
+      if (now < overspeedBurstUntilRef.current) {
+        targetSpeedRef.current = limit + 18;
+      } else if (now - lastTargetChangeRef.current > 3200) {
+        lastTargetChangeRef.current = now;
+
+        if (randomSpeedProfile === 'city') {
+          // City driving: 30 - 52 km/h
+          targetSpeedRef.current = Math.floor(30 + Math.random() * 22);
+        } else if (randomSpeedProfile === 'highway') {
+          // Highway driving: 80 - 118 km/h
+          targetSpeedRef.current = Math.floor(80 + Math.random() * 38);
+        } else if (randomSpeedProfile === 'cruising') {
+          // Cruising around speed limit
+          targetSpeedRef.current = Math.floor(limit - 8 + Math.random() * 16);
+        } else {
+          // Random Profile: Dynamic variations
+          const roll = Math.random();
+          if (roll < 0.65) {
+            // Cruise around limit (-10 to +4 km/h)
+            targetSpeedRef.current = Math.floor(limit - 10 + Math.random() * 14);
+          } else if (roll < 0.85) {
+            // Speed up / overspeed spike (+5 to +16 km/h)
+            targetSpeedRef.current = Math.floor(limit + 5 + Math.random() * 12);
+          } else {
+            // Slow down for corner / traffic (30 to 45 km/h)
+            targetSpeedRef.current = Math.floor(32 + Math.random() * 14);
+          }
+        }
+      }
+
+      // Smooth physics-based acceleration / deceleration
+      const delta = targetSpeedRef.current - currentSpeedFloatRef.current;
+      const step = Math.sign(delta) * Math.min(Math.abs(delta) * 0.12 + 0.35, 2.4);
+      const microJitter = (Math.random() - 0.5) * 0.8;
+      currentSpeedFloatRef.current = Math.max(0, Math.min(170, currentSpeedFloatRef.current + step + microJitter));
+
+      const newRoundedSpeed = Math.round(currentSpeedFloatRef.current);
+      setRandomSpeedKmh(newRoundedSpeed);
+
+      if (options?.speedLimitKmh && newRoundedSpeed > options.speedLimitKmh) {
+        options.onSpeedOverLimit?.(newRoundedSpeed);
+      }
+
+      // Advance simulated coordinates along heading
+      const dtHours = 0.3 / 3600; // 300ms in hours
+      const distanceKm = currentSpeedFloatRef.current * dtHours;
+      const headingRad = (simCoords.heading * Math.PI) / 180;
+      const dLat = (distanceKm / 111.32) * Math.cos(headingRad);
+      const dLng = (distanceKm / (111.32 * Math.cos((simCoords.lat * Math.PI) / 180))) * Math.sin(headingRad);
+      const headingWobble = (Math.random() - 0.5) * 1.5;
+
+      setSimCoords(prev => ({
+        lat: prev.lat + dLat,
+        lng: prev.lng + dLng,
+        heading: (prev.heading + headingWobble + 360) % 360,
+      }));
+    }, 300);
+
+    return () => clearInterval(interval);
+  }, [isRandomRunning, isManualOverride, randomSpeedProfile, options?.speedLimitKmh, options?.onSpeedOverLimit, simCoords.lat, simCoords.heading]);
 
   const clearGpsWatch = useCallback(() => {
     if (watchIdRef.current !== null && typeof navigator !== 'undefined' && 'geolocation' in navigator) {
@@ -211,35 +303,64 @@ export function useGpsTracker(options?: UseGpsTrackerOptions) {
     };
   }, [startGpsWatch, clearGpsWatch]);
 
-  // Determine current active speed
-  const isSpeedAvailable = isManualOverride || (gpsStatus === 'active' && liveGpsSpeedKmh !== null);
+  // Determine current active speed and telemetry
+  const isSpeedAvailable = isManualOverride || isRandomRunning || (gpsStatus === 'active' && liveGpsSpeedKmh !== null);
   const effectiveSpeedKmh: number | null = isManualOverride
     ? manualSpeedKmh
+    : isRandomRunning
+    ? randomSpeedKmh
     : (gpsStatus === 'active' && liveGpsSpeedKmh !== null ? liveGpsSpeedKmh : null);
-  const speedSource: 'gps' | 'manual' | 'none' = isManualOverride
+
+  const speedSource: 'gps' | 'manual' | 'random' | 'none' = isManualOverride
     ? 'manual'
+    : isRandomRunning
+    ? 'random'
     : (gpsStatus === 'active' && liveGpsSpeedKmh !== null)
     ? 'gps'
     : 'none';
 
+  const effectiveLat = latitude !== null ? latitude : (isRandomRunning ? simCoords.lat : null);
+  const effectiveLng = longitude !== null ? longitude : (isRandomRunning ? simCoords.lng : null);
+  const effectiveHeading = heading !== null ? heading : (isRandomRunning ? Math.round(simCoords.heading) : null);
+
+  const effectiveLocationName =
+    gpsStatus === 'active' && latitude !== null && longitude !== null
+      ? `${formatCoordinates(latitude, longitude)} (Live GPS)`
+      : isRandomRunning
+      ? 'Highway 1 Coastal Route • Dynamic Cruise Simulation'
+      : locationName;
+
+  const effectiveGpsStatus: GpsStatus =
+    gpsStatus === 'active'
+      ? 'active'
+      : isRandomRunning
+      ? 'simulated'
+      : gpsStatus;
+
   return {
-    gpsStatus,
-    latitude,
-    longitude,
-    accuracyMeters,
-    heading,
+    gpsStatus: effectiveGpsStatus,
+    rawGpsStatus: gpsStatus,
+    latitude: effectiveLat,
+    longitude: effectiveLng,
+    accuracyMeters: accuracyMeters || (isRandomRunning ? 5 : null),
+    heading: effectiveHeading,
     currentSpeedKmh: effectiveSpeedKmh,
     isSpeedAvailable,
     liveGpsSpeedKmh,
-    locationName,
+    locationName: effectiveLocationName,
     gpsErrorMessage,
     speedSource,
-    lastGpsUpdate,
+    lastGpsUpdate: lastGpsUpdate || (isRandomRunning ? Date.now() : null),
     // Controls
     isManualOverride,
     setIsManualOverride,
     manualSpeedKmh,
     setManualSpeedKmh,
+    isRandomRunning,
+    setIsRandomRunning,
+    randomSpeedProfile,
+    setRandomSpeedProfile,
+    triggerOverspeedBurst,
     retryGps,
   };
 }

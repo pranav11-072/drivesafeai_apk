@@ -39,10 +39,10 @@ export const TripTracker: React.FC<TripTrackerProps> = ({
   const [pathPoints, setPathPoints] = useState<PathPoint[]>([]);
   const [showFullHistory, setShowFullHistory] = useState(false);
 
-  const isGpsActive = speedData.gpsStatus === 'active';
-  const isGpsLoading = speedData.gpsStatus === 'loading';
-  const isGpsDenied = speedData.gpsStatus === 'denied';
-  const isGpsUnavailable = speedData.gpsStatus === 'unavailable';
+  const isGpsActive = speedData.gpsStatus === 'active' || speedData.gpsStatus === 'simulated' || speedData.speedSource === 'random';
+  const isGpsLoading = speedData.gpsStatus === 'loading' && !isGpsActive;
+  const isGpsDenied = speedData.gpsStatus === 'denied' && !isGpsActive;
+  const isGpsUnavailable = speedData.gpsStatus === 'unavailable' && !isGpsActive;
 
   // Sample trip logs with realistic historical data
   const [pastTrips, setPastTrips] = useState<TripRecord[]>([
@@ -427,7 +427,9 @@ export const TripTracker: React.FC<TripTrackerProps> = ({
             <Crosshair className="w-3 h-3" />
             <span>
               {isGpsActive
-                ? `GPS FIX (±${speedData.accuracyMeters || 10}m)`
+                ? speedData.speedSource === 'random'
+                  ? 'SIM DRIVE (±5m)'
+                  : `GPS FIX (±${speedData.accuracyMeters || 10}m)`
                 : isGpsLoading
                 ? 'ACQUIRING FIX'
                 : isGpsDenied

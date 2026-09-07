@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   ShieldAlert, PhoneCall, Volume2, VolumeX, AlertTriangle,
-  RotateCcw, Sparkles, Navigation, CheckCircle2, ChevronRight, X, ExternalLink
+  RotateCcw, Sparkles, Navigation, CheckCircle2, ChevronRight, X, ExternalLink, Play
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DriverState, SpeedData, CabinLightConfig, EmergencyContact } from '../types';
@@ -22,6 +22,9 @@ interface MobileDashboardProps {
   onSwitchToDesktopView?: () => void;
   onOpenScorecard?: () => void;
   onRetryGps?: () => void;
+  isRandomRunning?: boolean;
+  onToggleRandomRunning?: (enabled: boolean) => void;
+  onTriggerOverspeedBurst?: () => void;
 }
 
 export const MobileDashboard: React.FC<MobileDashboardProps> = ({
@@ -36,6 +39,9 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
   onSwitchToDesktopView,
   onOpenScorecard,
   onRetryGps,
+  isRandomRunning,
+  onToggleRandomRunning,
+  onTriggerOverspeedBurst,
 }) => {
   const [isSosModalOpen, setIsSosModalOpen] = useState(false);
   const [sosCountdown, setSosCountdown] = useState(5);
@@ -148,6 +154,9 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
 
   // GPS Status Mapping
   const getGpsStatus = () => {
+    if (speedData.speedSource === 'random' || speedData.gpsStatus === 'simulated') {
+      return { label: 'SIM CRUISE', color: 'text-sky-300', dot: 'bg-sky-400 animate-pulse' };
+    }
     if (speedData.gpsStatus === 'active') {
       return { label: 'ACTIVE', color: 'text-emerald-400', dot: 'bg-emerald-400 animate-pulse' };
     }
@@ -214,6 +223,70 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
     setSosDispatched(false);
     setIsSosModalOpen(true);
   };
+
+  // Auto-trigger SOS Call when critical threshold (>= 80%) is sustained > 5 seconds
+  const criticalDrowsyStartTimeRef = React.useRef<number | null>(null);
+  const lastAutoCallTimeRef = React.useRef<number>(0);
+  const [criticalSustainedSeconds, setCriticalSustainedSeconds] = useState<number>(0);
+
+  useEffect(() => {
+    let autotriggerPref = true;
+    try {
+      const saved = localStorage.getItem('drivesafe_sos_autotrigger');
+      if (saved !== null) autotriggerPref = saved === 'true';
+    } catch {}
+
+    if (!autotriggerPref || !isMonitoring) {
+      criticalDrowsyStartTimeRef.current = null;
+      setCriticalSustainedSeconds(0);
+      return;
+    }
+
+    const interval = setInterval(() => {
+      const isCritical =
+        driverState.drowsinessLevel >= 80 ||
+        driverState.alertLevel === 'RED' ||
+        (driverState.eyesClosed && driverState.drowsinessLevel >= 70);
+
+      const now = Date.now();
+      if (isCritical) {
+        if (!criticalDrowsyStartTimeRef.current) {
+          criticalDrowsyStartTimeRef.current = now;
+        }
+        const elapsedMs = now - criticalDrowsyStartTimeRef.current;
+        const elapsedSec = Math.min(5, elapsedMs / 1000);
+        setCriticalSustainedSeconds(elapsedSec);
+
+        if (elapsedMs >= 5000) {
+          if (now - lastAutoCallTimeRef.current > 30000 && !isSosModalOpen) {
+            lastAutoCallTimeRef.current = now;
+            soundManager.playCriticalAlarm();
+            soundManager.speakText(
+              "Critical warning: Driver drowsiness sustained for more than 5 seconds. Automatically initiating emergency SOS.",
+              true
+            );
+            handleOpenSos();
+            const contacts = getSavedContacts();
+            const primary = contacts.find(c => c.isPrimary) || contacts[0];
+            if (primary && primary.phone) {
+              try {
+                window.location.href = `tel:${primary.phone.replace(/[\s\-\(\)]/g, '')}`;
+              } catch (e) {
+                console.warn("Could not launch phone tel link", e);
+              }
+            }
+          }
+          criticalDrowsyStartTimeRef.current = null;
+          setCriticalSustainedSeconds(0);
+        }
+      } else {
+        criticalDrowsyStartTimeRef.current = null;
+        setCriticalSustainedSeconds(0);
+      }
+    }, 100);
+
+    return () => clearInterval(interval);
+  }, [driverState.drowsinessLevel, driverState.alertLevel, driverState.eyesClosed, isMonitoring, isSosModalOpen]);
 
   // Optional Press-and-Hold for physical confirmation
   const handleStartHold = () => {
@@ -293,6 +366,29 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
 
         {/* Quick controls */}
         <div className="flex items-center gap-2">
+          {/* Monitoring toggle */}
+          <button
+            onClick={() => onToggleMonitoring(!isMonitoring)}
+            className={`px-2.5 py-1 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-md ${
+              isMonitoring
+                ? 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-950/50'
+                : 'bg-blue-600 hover:bg-blue-500 text-white shadow-blue-950/50 animate-pulse'
+            }`}
+            title={isMonitoring ? "Pause Driver Monitoring" : "Start Driver Monitoring & Camera"}
+          >
+            {isMonitoring ? (
+              <>
+                <span className="w-2 h-2 rounded-full bg-emerald-300 animate-ping" />
+                <span>Monitoring</span>
+              </>
+            ) : (
+              <>
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>Start</span>
+              </>
+            )}
+          </button>
+
           {/* Mute toggle */}
           <button
             onClick={onToggleMute}
@@ -334,6 +430,22 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
             <p className="text-xs text-white font-semibold">
               High fatigue detected! Pull over at the nearest safe rest area.
             </p>
+
+            {/* 5-second Auto-trigger progress bar */}
+            {criticalSustainedSeconds > 0 && (
+              <div className="w-full mt-2 pt-2 border-t border-red-500/40 text-left">
+                <div className="flex items-center justify-between text-[11px] text-red-200 font-bold mb-1">
+                  <span>Auto-trigger SOS Call countdown:</span>
+                  <span className="font-mono">{(5 - criticalSustainedSeconds).toFixed(1)}s</span>
+                </div>
+                <div className="w-full bg-black/50 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="bg-red-500 h-full transition-all duration-100"
+                    style={{ width: `${(criticalSustainedSeconds / 5) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </motion.div>
         )}
       </AnimatePresence>
@@ -348,6 +460,7 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
           driverState={driverState}
           setDriverState={setDriverState}
           isMonitoring={isMonitoring}
+          onToggleMonitoring={onToggleMonitoring}
           isMobileMode={true}
         />
       </section>
@@ -359,7 +472,11 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
         {/* Live Vehicle Speed Card */}
         <div
           id="mobile-speed-card"
-          className="rounded-2xl bg-white/5 border border-white/10 p-4 backdrop-blur-xl shadow-xl flex flex-col items-center justify-center text-center relative overflow-hidden"
+          className={`rounded-2xl bg-white/5 border p-4 backdrop-blur-xl shadow-xl flex flex-col items-center justify-center text-center relative overflow-hidden transition-all ${
+            speedData.isOverSpeed
+              ? 'border-red-500/80 bg-red-500/10 shadow-[0_0_20px_rgba(239,68,68,0.3)] animate-pulse'
+              : 'border-white/10'
+          }`}
         >
           <div className="text-[11px] font-mono font-bold tracking-[0.18em] text-slate-400 uppercase mb-1">
             SPEED
@@ -368,7 +485,15 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
           <div className="my-1 flex items-baseline justify-center gap-1">
             {speedDisplay.isAvailable ? (
               <>
-                <span className="text-3xl sm:text-4xl font-black font-mono tracking-tight text-white">
+                <span
+                  className={`text-3xl sm:text-4xl font-black font-mono tracking-tight ${
+                    speedData.isOverSpeed
+                      ? 'text-red-400'
+                      : speedData.speedSource === 'random'
+                      ? 'text-sky-300'
+                      : 'text-white'
+                  }`}
+                >
                   {speedDisplay.value}
                 </span>
                 <span className="text-xs font-mono font-semibold text-slate-400 uppercase">
@@ -382,10 +507,16 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
             )}
           </div>
 
-          {/* Subtle GPS Signal Indicator */}
+          {/* Subtle Telematics Signal Indicator */}
           <div className="mt-1 flex items-center gap-1.5 text-[10px] font-mono text-slate-400">
             <span className={`w-1.5 h-1.5 rounded-full ${gpsStatus.dot}`}></span>
-            <span className="truncate">{speedData.isSpeedAvailable ? 'GPS Speed' : 'Signal Syncing'}</span>
+            <span className="truncate">
+              {speedData.speedSource === 'random'
+                ? 'Random Drive Sim'
+                : speedData.isSpeedAvailable
+                ? 'GPS Speed'
+                : 'Signal Syncing'}
+            </span>
           </div>
         </div>
 

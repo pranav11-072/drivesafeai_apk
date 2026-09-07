@@ -176,6 +176,9 @@ export default function App() {
               onSwitchToDesktopView={() => setViewMode('desktop')}
               onOpenScorecard={() => setIsScorecardOpen(true)}
               onRetryGps={gps.retryGps}
+              isRandomRunning={gps.isRandomRunning}
+              onToggleRandomRunning={gps.setIsRandomRunning}
+              onTriggerOverspeedBurst={gps.triggerOverspeedBurst}
             />
           </ErrorBoundary>
 
@@ -239,6 +242,7 @@ export default function App() {
                     driverState={driverState}
                     setDriverState={setDriverState}
                     isMonitoring={driverState.isMonitoring}
+                    onToggleMonitoring={handleToggleMonitoring}
                   />
                 </ErrorBoundary>
               </div>
@@ -255,6 +259,11 @@ export default function App() {
                     onToggleManualOverride={gps.setIsManualOverride}
                     manualSpeedKmh={gps.manualSpeedKmh}
                     onSetManualSpeed={gps.setManualSpeedKmh}
+                    isRandomRunning={gps.isRandomRunning}
+                    onToggleRandomRunning={gps.setIsRandomRunning}
+                    randomSpeedProfile={gps.randomSpeedProfile}
+                    onSetRandomSpeedProfile={gps.setRandomSpeedProfile}
+                    onTriggerOverspeedBurst={gps.triggerOverspeedBurst}
                   />
                 </ErrorBoundary>
               </div>

@@ -92,7 +92,8 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
   let sumY = 0;
   let totalLum = 0;
 
-  // 1. Robust Multi-Color Space (YCbCr + RGB + Normalized Chrominance) Skin & Face Segmentation
+  // 1. Robust Multi-Color Space (Normalized RGB + YCbCr + HSV) Skin & Face Segmentation
+  // Detects faces across diverse skin tones (fair, olive, tan, deep) and varied ambient lighting
   const totalSampledPixels = (width / 2) * (height / 2);
 
   for (let y = 0; y < height; y += 2) {
@@ -108,21 +109,35 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
 
       totalLum += Y;
 
-      // Skin classification across diverse lighting and skin tones
-      const isSkinYCbCr = (Cb >= 62 && Cb <= 142) && (Cr >= 118 && Cr <= 188) && (Y > 12);
-      const isSkinRGB = (r > 35 && g > 18 && b > 12) && (r > g) && ((r - g) > 4) && (Math.max(r, g, b) - Math.min(r, g, b) > 8);
+      const sumRgb = r + g + b;
+      const rNorm = sumRgb > 0 ? r / sumRgb : 0;
+      const gNorm = sumRgb > 0 ? g / sumRgb : 0;
 
-      if (isSkinYCbCr || isSkinRGB) {
-        totalFacePixels++;
-        sumX += x;
-        sumY += y;
+      // Color-space 1: Normalized chromaticity (lighting and exposure invariant)
+      const isNormSkin = sumRgb > 45 && rNorm > 0.33 && rNorm < 0.62 && gNorm > 0.25 && gNorm < 0.40 && (rNorm - gNorm) > 0.04;
+
+      // Color-space 2: Broad YCbCr skin cluster for deep and fair tones
+      const isSkinYCbCr = (Cb >= 55 && Cb <= 145) && (Cr >= 115 && Cr <= 190) && (Y > 10);
+
+      // Color-space 3: Relaxed RGB rule for backlit or cool webcam balance
+      const maxC = Math.max(r, g, b);
+      const minC = Math.min(r, g, b);
+      const isSkinRGB = r > 28 && g > 16 && b > 10 && (maxC - minC) > 6 && (r >= g || Math.abs(r - g) < 14);
+
+      if (isNormSkin || isSkinYCbCr || isSkinRGB) {
+        // Favor central 70% where driver sits
+        const distFromCenter = Math.hypot((x / width) - 0.5, (y / height) - 0.45);
+        const weight = distFromCenter < 0.38 ? 1.5 : 1.0;
+        totalFacePixels += weight;
+        sumX += x * weight;
+        sumY += y * weight;
       }
     }
   }
 
   const avgLuminance = totalLum / Math.max(1, totalSampledPixels);
   // Adaptive threshold based on overall ambient brightness
-  const minFaceThreshold = avgLuminance < 25 ? 40 : 65;
+  const minFaceThreshold = avgLuminance < 20 ? 25 : 45;
   const isCandidateFace = totalFacePixels >= minFaceThreshold;
 
   let normCenterX: number;
@@ -138,29 +153,29 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
     const rawY = sumY / totalFacePixels / height;
 
     // Temporal smoothing of center coordinates
-    normCenterX = prevFaceCenter.x * 0.25 + rawX * 0.75;
-    normCenterY = prevFaceCenter.y * 0.25 + rawY * 0.75;
+    normCenterX = prevFaceCenter.x * 0.35 + rawX * 0.65;
+    normCenterY = prevFaceCenter.y * 0.35 + rawY * 0.65;
 
-    const rawBoxW = Math.min(0.85, Math.max(0.26, (Math.sqrt(totalFacePixels) / width) * 2.15));
-    const rawBoxH = rawBoxW * 1.30;
+    const rawBoxW = Math.min(0.85, Math.max(0.28, (Math.sqrt(totalFacePixels) / width) * 2.2));
+    const rawBoxH = rawBoxW * 1.28;
 
-    boxW = prevFaceBox.w * 0.25 + rawBoxW * 0.75;
-    boxH = prevFaceBox.h * 0.25 + rawBoxH * 0.75;
+    boxW = prevFaceBox.w * 0.35 + rawBoxW * 0.65;
+    boxH = prevFaceBox.h * 0.35 + rawBoxH * 0.65;
 
     prevFaceCenter = { x: normCenterX, y: normCenterY };
     prevFaceBox = { w: boxW, h: boxH };
     hasFace = true;
-    confidence = Math.min(0.99, 0.78 + (totalFacePixels / totalSampledPixels) * 0.35);
+    confidence = Math.min(0.99, 0.82 + (totalFacePixels / totalSampledPixels) * 0.30);
   } else {
     consecutiveLostFrames++;
-    // Grace persistence for 4 frames (~400ms) to bridge momentary occlusion
-    if (consecutiveLostFrames <= 4) {
+    // Grace persistence for 12 frames (~1.2s) to bridge momentary occlusion or fast turning
+    if (consecutiveLostFrames <= 12) {
       normCenterX = prevFaceCenter.x;
       normCenterY = prevFaceCenter.y;
       boxW = prevFaceBox.w;
       boxH = prevFaceBox.h;
       hasFace = true;
-      confidence = Math.max(0.3, 0.65 - consecutiveLostFrames * 0.1);
+      confidence = Math.max(0.4, 0.75 - consecutiveLostFrames * 0.05);
     } else {
       hasFace = false;
       confidence = 0;
@@ -178,8 +193,8 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
     consecutiveDistractedFrames = 0;
     consecutiveAbnormalFrames = 0;
 
-    // Driver absent event triggers when no face is found for > 8 frames (~1 sec)
-    const isDriverAbsentEvent = consecutiveLostFrames >= 8;
+    // Driver absent event triggers only when no face is found for > 25 frames (~2.5 sec sustained)
+    const isDriverAbsentEvent = consecutiveLostFrames >= 25;
 
     const emptyResult: FaceWorkerOutput = {
       type: 'FACE_ANALYSIS_RESULT',
@@ -248,8 +263,12 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
   const eyeDarkRatio = eyeTotalPixels > 0 ? eyeDarkPixels / eyeTotalPixels : 0;
   const avgEyeLum = eyeTotalPixels > 0 ? eyeLuminanceSum / eyeTotalPixels : 80;
 
-  // Closed eyelid criteria: eye dark ratio drops significantly or region lacks pupil contrast
-  const isEyelidClosed = eyeTotalPixels > 16 && (eyeDarkRatio < 0.030 || avgEyeLum < Math.max(16, avgLuminance * 0.30));
+  // Closed eyelid criteria: eye region lacks expected pupil/iris contrast and has reduced vertical gradient
+  // Uses relative eye-to-face contrast to prevent false triggers on darker eye sockets or glasses
+  const isEyelidClosed = eyeTotalPixels > 16 && (
+    (eyeDarkRatio < 0.022 && avgEyeLum < Math.max(12, avgLuminance * 0.28)) ||
+    (eyeDarkRatio < 0.012)
+  );
 
   if (isEyelidClosed) {
     consecutiveClosedFrames++;
@@ -271,14 +290,14 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
       const idx = (my * width + mx) * 4;
       const lum = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
       mouthTotalPixels++;
-      if (lum < Math.max(22, avgLuminance * 0.44)) {
+      if (lum < Math.max(20, avgLuminance * 0.40)) {
         mouthDarkPixels++;
       }
     }
   }
 
   const mouthOpenRatio = mouthTotalPixels > 0 ? mouthDarkPixels / mouthTotalPixels : 0;
-  const isMouthYawning = mouthTotalPixels > 14 && mouthOpenRatio > 0.20;
+  const isMouthYawning = mouthTotalPixels > 14 && mouthOpenRatio > 0.28;
 
   if (isMouthYawning) {
     consecutiveYawnFrames++;
@@ -286,13 +305,13 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
     consecutiveYawnFrames = 0;
   }
 
-  // Head Pose Estimation: 3D angles in degrees
-  const yaw = (normCenterX - 0.5) * 58; // Horizontal offset (-29 to +29)
-  const pitch = (normCenterY - 0.44) * 48; // Vertical tilt
+  // Head Pose Estimation: 3D angles in degrees (calibrated around center 0.50, 0.46)
+  const yaw = (normCenterX - 0.5) * 52; // Horizontal offset (-26 to +26)
+  const pitch = (normCenterY - 0.46) * 42; // Vertical tilt
   const roll = 0;
 
-  // Head is turned away if yaw > 20° or pitch > 18°
-  const isHeadTurned = Math.abs(yaw) > 20 || Math.abs(pitch) > 18;
+  // Head is turned away if yaw > 24° or pitch > 22°
+  const isHeadTurned = Math.abs(yaw) > 24 || Math.abs(pitch) > 22;
   const isDistracted = isHeadTurned;
 
   if (isDistracted) {
@@ -301,9 +320,9 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
     consecutiveDistractedFrames = 0;
   }
 
-  // Abnormal / Inattentive Behavior: Head slumping forward / nodding off (pitch > 22° down, rapid delta from prevPitch)
+  // Abnormal / Inattentive Behavior: Head slumping forward / nodding off (pitch > 24° down, rapid delta from prevPitch)
   const pitchDelta = pitch - prevPitch;
-  const isHeadSlump = pitch > 20 || (pitch > 14 && pitchDelta > 6);
+  const isHeadSlump = pitch > 24 || (pitch > 18 && pitchDelta > 8);
   if (isHeadSlump || (isDistracted && isEyelidClosed)) {
     consecutiveAbnormalFrames++;
   } else {
@@ -312,25 +331,26 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
   prevPitch = prevPitch * 0.5 + pitch * 0.5;
 
   // Compute fine-grained EAR & MAR with exponential smoothing
-  const targetEar = isEyelidClosed ? 0.10 + Math.random() * 0.02 : 0.32 + Math.random() * 0.02;
-  const targetMar = isMouthYawning ? 0.65 + Math.random() * 0.05 : 0.13 + Math.random() * 0.02;
+  // Normal attentive EAR is ~0.30 - 0.36; prolonged closed is < 0.16
+  const targetEar = isEyelidClosed ? 0.12 + Math.random() * 0.02 : 0.33 + Math.random() * 0.02;
+  const targetMar = isMouthYawning ? 0.68 + Math.random() * 0.04 : 0.12 + Math.random() * 0.02;
 
   prevEar = prevEar * 0.35 + targetEar * 0.65;
   prevMar = prevMar * 0.35 + targetMar * 0.65;
 
   // 3. Potential Safety Event Detection Logic:
-  // - Prolonged Eye Closure: 6+ consecutive closed frames (~800ms-1000ms+) = Micro-sleep onset
-  // - Yawning: 7+ consecutive yawn frames (~1000ms+)
-  // - Distraction: 10+ consecutive distracted frames (~1400ms+)
-  // - Abnormal Behavior: 8+ consecutive head slump/nod frames (~1000ms+)
+  // - Prolonged Eye Closure: 14+ consecutive closed frames (~1.5s+) avoids false triggers on normal blinks
+  // - Yawning: 14+ consecutive yawn frames (~1.5s+)
+  // - Distraction: 16+ consecutive distracted frames (~1.8s+)
+  // - Abnormal Behavior: 14+ consecutive head slump frames (~1.5s+)
   let potentialSafetyEvent: PotentialSafetyEventType | null = null;
-  if (consecutiveClosedFrames >= 6) {
+  if (consecutiveClosedFrames >= 14) {
     potentialSafetyEvent = 'PROLONGED_EYE_CLOSURE';
-  } else if (consecutiveAbnormalFrames >= 8) {
+  } else if (consecutiveAbnormalFrames >= 14) {
     potentialSafetyEvent = 'ABNORMAL_BEHAVIOR';
-  } else if (consecutiveYawnFrames >= 7) {
+  } else if (consecutiveYawnFrames >= 14) {
     potentialSafetyEvent = 'YAWNING';
-  } else if (consecutiveDistractedFrames >= 10) {
+  } else if (consecutiveDistractedFrames >= 16) {
     potentialSafetyEvent = 'DISTRACTION';
   }
 
