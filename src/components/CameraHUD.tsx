@@ -292,9 +292,16 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
       // Attach immediately to video element
       if (videoRef.current) {
-        videoRef.current.srcObject = stream;
+        const video = videoRef.current;
+        video.srcObject = stream;
+        video.muted = true;
+        video.playsInline = true;
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
+        video.setAttribute('muted', '');
+        video.setAttribute('autoplay', '');
         try {
-          await videoRef.current.play();
+          await video.play();
         } catch (playErr) {
           console.warn("Video auto-play deferred until user gesture:", playErr);
         }
@@ -309,17 +316,17 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
       let errorMsg = "Webcam not accessible. You can use the Virtual Driver Simulator or open in a full tab.";
       if (err?.message === 'SECURE_CONTEXT_REQUIRED') {
-        errorMsg = "Camera access requires a secure HTTPS connection. Please ensure you are viewing this app over HTTPS (e.g. deployed on Vercel or secure custom domain).";
+        errorMsg = "Camera access requires a secure HTTPS connection. Please ensure you are viewing this app over HTTPS or running the APK.";
       } else if (err?.message === 'UNSUPPORTED_BROWSER') {
-        errorMsg = "Your browser does not support webcam capture (navigator.mediaDevices.getUserMedia). Please update to a modern browser like Chrome, Safari, Edge, or Firefox.";
+        errorMsg = "Your device does not support webcam capture (navigator.mediaDevices.getUserMedia). Please update WebView/browser.";
       } else if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
-        errorMsg = "Camera permission was denied. Please click the camera/lock icon in your browser address bar to allow camera access, then click 'Retry Permission'.";
+        errorMsg = "Camera permission was denied. On Android: Open Settings -> Apps -> DriveSafe AI -> Permissions and allow Camera access, then tap 'Start Monitoring'.";
       } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
-        errorMsg = "No webcam hardware detected on this device. Please connect a webcam or switch to Virtual Simulator mode.";
+        errorMsg = "No camera hardware detected on this device. Please connect a webcam or switch to Virtual Simulator mode.";
       } else if (err?.name === 'NotReadableError' || err?.name === 'TrackStartError' || err?.name === 'AbortError') {
-        errorMsg = "Camera hardware is currently in use by another program (e.g. Zoom, Teams, Meet) or locked by the system. Please close other camera apps and retry.";
+        errorMsg = "Camera hardware is currently in use by another app or locked by the system. Please close other camera apps and retry.";
       } else if (err?.name === 'SecurityError') {
-        errorMsg = "Camera access restricted inside iframe. Click 'Open in New Tab' to grant full camera permissions.";
+        errorMsg = "Camera access restricted. If running in browser iframe, click 'Open in New Tab' to grant full camera permissions.";
       } else if (err?.name === 'OverconstrainedError' || err?.name === 'ConstraintNotSatisfiedError') {
         errorMsg = "Camera requested resolution/settings are not supported by your hardware.";
       } else if (err?.message) {
@@ -363,8 +370,15 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
   // Synchronize active media stream with videoRef whenever mounted or state updates
   useEffect(() => {
     if (mediaStream && videoRef.current && videoRef.current.srcObject !== mediaStream) {
-      videoRef.current.srcObject = mediaStream;
-      videoRef.current.play().catch(e => console.warn("Video stream attach error:", e));
+      const video = videoRef.current;
+      video.srcObject = mediaStream;
+      video.muted = true;
+      video.playsInline = true;
+      video.setAttribute('playsinline', 'true');
+      video.setAttribute('webkit-playsinline', 'true');
+      video.setAttribute('muted', '');
+      video.setAttribute('autoplay', '');
+      video.play().catch(e => console.warn("Video stream attach error:", e));
     }
   }, [mediaStream, isMonitoring, isSimulatorMode]);
 
@@ -586,10 +600,16 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     if (!isMonitoring) return;
 
     // Instantiate custom Face Worker off main thread
-    const worker = new Worker(new URL('../workers/faceWorker.ts', import.meta.url), { type: 'module' });
-    workerRef.current = worker;
+    let worker: Worker | null = null;
+    try {
+      worker = new Worker(new URL('../workers/faceWorker.ts', import.meta.url), { type: 'module' });
+      workerRef.current = worker;
+    } catch (e) {
+      console.warn("FaceWorker worker creation deferred:", e);
+    }
 
-    worker.onmessage = (e: MessageEvent<FaceWorkerOutput>) => {
+    if (worker) {
+      worker.onmessage = (e: MessageEvent<FaceWorkerOutput>) => {
       isWorkerBusyRef.current = false;
       const data = e.data;
       if (data && data.type === 'FACE_ANALYSIS_RESULT') {
@@ -665,6 +685,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         }
       }
     };
+    }
 
     // Low-resolution off-screen canvas for frame extraction (160x120 for sharp eye details)
     const analysisCanvas = document.createElement('canvas');
@@ -710,7 +731,11 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
               height: 120,
               timestamp: now,
             };
-            worker.postMessage(inputMsg);
+            if (worker) {
+              worker.postMessage(inputMsg);
+            } else {
+              isWorkerBusyRef.current = false;
+            }
           }
         } else if (isSimulatorMode || !cameraPermission) {
           // Virtual Driver Simulator Animation Frame

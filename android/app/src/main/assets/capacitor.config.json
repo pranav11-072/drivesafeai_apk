@@ -3,6 +3,12 @@
 	"appName": "DriveSafe AI",
 	"webDir": "dist",
 	"server": {
-		"androidScheme": "https"
+		"androidScheme": "https",
+		"hostname": "localhost",
+		"cleartext": true
+	},
+	"android": {
+		"allowMixedContent": true,
+		"captureInput": true
 	}
 }

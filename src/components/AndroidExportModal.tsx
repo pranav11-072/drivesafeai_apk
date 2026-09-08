@@ -48,48 +48,49 @@ npx cap open android
   "webDir": "dist",
   "server": {
     "androidScheme": "https",
+    "hostname": "localhost",
     "cleartext": true
   },
-  "plugins": {
-    "Camera": {
-      "permissions": ["camera"]
-    },
-    "Geolocation": {
-      "permissions": ["location"]
-    }
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true
   }
 }`;
 
   const manifestXml = `<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.drivesafe.ai">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- DriveSafe AI Required Android Permissions -->
+    <!-- DriveSafe AI Hardware Features -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+
+    <!-- DriveSafe AI Permissions -->
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-    <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-
-    <uses-feature android:name="android.hardware.camera" android:required="true" />
-    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
-        android:label="DriveSafe AI"
+        android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
-        android:usesCleartextTraffic="true">
+        android:usesCleartextTraffic="true"
+        android:hardwareAccelerated="true">
 
         <activity
-            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"
             android:name=".MainActivity"
-            android:label="DriveSafe AI"
-            android:theme="@style/AppTheme.NoActionBar"
+            android:label="@string/title_activity_main"
+            android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
             android:exported="true">
 
@@ -98,18 +99,78 @@ npx cap open android
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="\${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths"></meta-data>
+        </provider>
     </application>
 </manifest>`;
 
-  const kotlinMainActivity = `package com.drivesafe.ai
+  const javaMainActivity = `package com.drivesafe.ai;
 
-import android.os.Bundle
-import com.getcapacitor.BridgeActivity
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.os.Bundle;
+import android.webkit.WebSettings;
+import android.webkit.WebView;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import com.getcapacitor.BridgeActivity;
 
-class MainActivity : BridgeActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        // DriveSafe AI Native Bridge Initialized
+public class MainActivity extends BridgeActivity {
+    private static final int PERMISSION_REQ_CODE = 2001;
+
+    @Override
+    public void onCreate(Bundle savedInstanceState) {
+        super.onCreate(savedInstanceState);
+
+        // Configure WebView for seamless camera video capture & audio alerts
+        if (bridge != null && bridge.getWebView() != null) {
+            WebView webView = bridge.getWebView();
+            WebSettings settings = webView.getSettings();
+            settings.setMediaPlaybackRequiresUserGesture(false);
+            settings.setJavaScriptCanOpenWindowsAutomatically(true);
+            settings.setAllowFileAccess(true);
+            settings.setDomStorageEnabled(true);
+            settings.setDatabaseEnabled(true);
+        }
+
+        // Request runtime Camera & Audio permissions upfront on launch if needed
+        requestAppPermissions();
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        if (bridge != null && bridge.getWebView() != null) {
+            bridge.getWebView().getSettings().setMediaPlaybackRequiresUserGesture(false);
+        }
+    }
+
+    private void requestAppPermissions() {
+        String[] permissions = {
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.MODIFY_AUDIO_SETTINGS
+        };
+
+        boolean needPrompt = false;
+        for (String perm : permissions) {
+            if (ContextCompat.checkSelfPermission(this, perm) != PackageManager.PERMISSION_GRANTED) {
+                needPrompt = true;
+                break;
+            }
+        }
+
+        if (needPrompt) {
+            ActivityCompat.requestPermissions(this, permissions, PERMISSION_REQ_CODE);
+        }
     }
 }`;
 
@@ -188,7 +249,7 @@ class MainActivity : BridgeActivity() {
                   : 'text-slate-300 hover:text-white hover:bg-white/10'
               }`}
             >
-              <Smartphone className="w-4 h-4" /> 4. MainActivity.kt
+              <Smartphone className="w-4 h-4" /> 4. MainActivity.java
             </button>
             <button
               onClick={() => setActiveTab('alternatives')}
@@ -254,16 +315,16 @@ class MainActivity : BridgeActivity() {
 
             {activeTab === 'activity' && (
               <div>
-                <p className="text-xs text-slate-300 mb-2 font-medium">Place this inside <code className="text-emerald-400">android/app/src/main/java/com/drivesafe/ai/MainActivity.kt</code>:</p>
-                <div className="bg-slate-950/90 p-4 rounded-2xl border border-white/10 font-mono text-xs text-sky-300 whitespace-pre-wrap overflow-x-auto backdrop-blur-md">
-                  {kotlinMainActivity}
+                <p className="text-xs text-slate-300 mb-2 font-medium">Place this inside <code className="text-emerald-400">android/app/src/main/java/com/drivesafe/ai/MainActivity.java</code>:</p>
+                <div className="bg-slate-950/90 p-4 rounded-2xl border border-white/10 font-mono text-xs text-sky-300 whitespace-pre-wrap overflow-x-auto max-h-64 backdrop-blur-md">
+                  {javaMainActivity}
                 </div>
                 <button
-                  onClick={() => handleCopy(kotlinMainActivity, 'act')}
+                  onClick={() => handleCopy(javaMainActivity, 'act')}
                   className="mt-2.5 flex items-center gap-1.5 px-3.5 py-1.5 bg-white/10 hover:bg-white/20 text-white border border-white/10 rounded-xl text-xs font-semibold shadow-md transition-all"
                 >
                   {copiedTab === 'act' ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
-                  <span>{copiedTab === 'act' ? 'Copied Kotlin Activity!' : 'Copy MainActivity.kt'}</span>
+                  <span>{copiedTab === 'act' ? 'Copied Java Activity!' : 'Copy MainActivity.java'}</span>
                 </button>
               </div>
             )}
