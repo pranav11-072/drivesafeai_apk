@@ -7,7 +7,9 @@ export interface DriverState {
   safetyScore: number; // 0 to 100 (real-time driver safety rating)
   ear: number; // Eye Aspect Ratio (0.0 to 0.4, < 0.20 means closed)
   mar: number; // Mouth Aspect Ratio (yawning)
-  headTilt: number; // Distraction degree
+  headTilt: number; // Distraction degree (yaw)
+  headPitch?: number; // Vertical pitch degrees (positive = downward tilt / nod)
+  isHeadDown?: boolean; // Head nodding down or forward slump detected
   eyesClosed: boolean;
   isYawning: boolean;
   isDistracted: boolean;
@@ -20,6 +22,20 @@ export interface DriverState {
   yawnCount: number;
   microSleepCount: number;
   distractionCount: number;
+}
+
+export interface DrowsinessEvent {
+  id: string;
+  timestamp: string; // e.g. "14:22:05"
+  date: string;
+  type: 'EYES_CLOSED' | 'HEAD_DOWN' | 'DISTRACTION' | 'YAWNING' | 'DRIVER_ABSENT';
+  severity: 'CRITICAL' | 'WARNING' | 'MODERATE';
+  title: string;
+  description: string;
+  durationSeconds?: number;
+  pitchDeg?: number;
+  ear?: number;
+  speedKmh?: number | null;
 }
 
 export interface GeminiFrameAnalysisResult {

@@ -19,6 +19,7 @@ export interface LandmarkPoint {
 
 export type PotentialSafetyEventType =
   | 'PROLONGED_EYE_CLOSURE'
+  | 'HEAD_DOWN'
   | 'YAWNING'
   | 'DISTRACTION'
   | 'DRIVER_ABSENT'
@@ -52,14 +53,16 @@ export interface FaceWorkerOutput {
     ear: number; // Eye Aspect Ratio (0.0 to 0.40)
     mar: number; // Mouth Aspect Ratio (0.0 to 0.85)
     yaw: number; // Horizontal head rotation in degrees (-45 to +45)
-    pitch: number; // Vertical head tilt in degrees (-40 to +40)
+    pitch: number; // Vertical head tilt in degrees (-40 to +40, positive is DOWN)
     roll: number;
     isEyelidClosed: boolean;
     isMouthYawning: boolean;
     isHeadTurned: boolean;
+    isHeadDown: boolean;
     isDistracted: boolean;
     abnormalBehavior: boolean;
     consecutiveClosedFrames: number;
+    consecutiveHeadDownFrames: number;
     consecutiveYawnFrames: number;
     consecutiveDistractedFrames: number;
     isLowLight?: boolean;
@@ -73,6 +76,7 @@ let prevFaceCenter = { x: 0.5, y: 0.45 };
 let prevFaceBox = { w: 0.45, h: 0.58 };
 let consecutiveLostFrames = 0;
 let consecutiveClosedFrames = 0;
+let consecutiveHeadDownFrames = 0;
 let consecutiveYawnFrames = 0;
 let consecutiveDistractedFrames = 0;
 let consecutiveAbnormalFrames = 0;
@@ -189,6 +193,7 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
   // Handle Driver Absent State
   if (!hasFace) {
     consecutiveClosedFrames = 0;
+    consecutiveHeadDownFrames = 0;
     consecutiveYawnFrames = 0;
     consecutiveDistractedFrames = 0;
     consecutiveAbnormalFrames = 0;
@@ -224,9 +229,11 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
         isEyelidClosed: false,
         isMouthYawning: false,
         isHeadTurned: false,
+        isHeadDown: false,
         isDistracted: true,
         abnormalBehavior: isDriverAbsentEvent,
         consecutiveClosedFrames: 0,
+        consecutiveHeadDownFrames: 0,
         consecutiveYawnFrames: 0,
         consecutiveDistractedFrames: 0,
       },
@@ -365,12 +372,26 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
 
   // Head Pose Estimation: 3D angles in degrees (calibrated around center 0.50, 0.46)
   const yaw = (normCenterX - 0.5) * 52; // Horizontal offset (-26 to +26)
-  const pitch = (normCenterY - 0.46) * 42; // Vertical tilt
+  const pitch = (normCenterY - 0.46) * 42; // Vertical tilt (positive = DOWNWARD, negative = UPWARD)
   const roll = 0;
 
-  // Head is turned away if yaw > 22° or pitch > 20°
-  const isHeadTurned = Math.abs(yaw) > 22 || Math.abs(pitch) > 20;
-  const isDistracted = isHeadTurned;
+  // Head is turned away if yaw > 18° or tilted up pitch < -15°
+  const isHeadTurned = Math.abs(yaw) > 18 || pitch < -15;
+
+  // High-sensitivity Head Down / Nodding Off Detection:
+  // Downward pitch > 10.5° or moving downward (pitch > 7.5° with downward delta > 3.0°)
+  const pitchDelta = pitch - prevPitch;
+  const isHeadDownInstant = pitch > 10.5 || (pitch > 7.5 && pitchDelta > 3.0);
+
+  if (isHeadDownInstant) {
+    consecutiveHeadDownFrames++;
+  } else {
+    consecutiveHeadDownFrames = Math.max(0, consecutiveHeadDownFrames - 2);
+  }
+
+  // Head down flagged after 3 consecutive frames (~300ms) for ultra-responsive safety alerting
+  const isHeadDown = consecutiveHeadDownFrames >= 3;
+  const isDistracted = isHeadTurned || isHeadDown;
 
   if (isDistracted) {
     consecutiveDistractedFrames++;
@@ -378,9 +399,8 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
     consecutiveDistractedFrames = Math.max(0, consecutiveDistractedFrames - 2);
   }
 
-  // Abnormal / Inattentive Behavior: Head slumping forward / nodding off (pitch > 24° down, rapid delta from prevPitch)
-  const pitchDelta = pitch - prevPitch;
-  const isHeadSlump = pitch > 24 || (pitch > 18 && pitchDelta > 8);
+  // Abnormal / Inattentive Behavior: Head slumping forward / nodding off or distracted with closed eyes
+  const isHeadSlump = isHeadDown || pitch > 13.5;
   if (isHeadSlump || (isDistracted && isEyelidClosed)) {
     consecutiveAbnormalFrames++;
   } else {
@@ -397,18 +417,18 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
   prevMar = prevMar * 0.25 + targetMar * 0.75;
 
   // 3. Potential Safety Event Detection Logic:
-  // - Prolonged Eye Closure: 6+ consecutive closed frames (~600ms+) triggers safety event
+  // - Prolonged Eye Closure: 5+ consecutive closed frames (~500ms+) triggers safety event
+  // - Head Down / Nodding: 3+ consecutive head down frames (~300ms) triggers immediate alert
   // - Yawning: 8+ consecutive yawn frames (~800ms+)
-  // - Distraction: 10+ consecutive distracted frames (~1.0s+)
-  // - Abnormal Behavior: 8+ consecutive head slump frames (~800ms+)
+  // - Distraction: 7+ consecutive distracted frames (~700ms+)
   let potentialSafetyEvent: PotentialSafetyEventType | null = null;
   if (consecutiveClosedFrames >= 5) {
     potentialSafetyEvent = 'PROLONGED_EYE_CLOSURE';
-  } else if (consecutiveAbnormalFrames >= 8) {
-    potentialSafetyEvent = 'ABNORMAL_BEHAVIOR';
+  } else if (isHeadDown || consecutiveHeadDownFrames >= 3 || consecutiveAbnormalFrames >= 3) {
+    potentialSafetyEvent = 'HEAD_DOWN';
   } else if (consecutiveYawnFrames >= 8) {
     potentialSafetyEvent = 'YAWNING';
-  } else if (consecutiveDistractedFrames >= 10) {
+  } else if (consecutiveDistractedFrames >= 7) {
     potentialSafetyEvent = 'DISTRACTION';
   }
 
@@ -495,9 +515,11 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
       isEyelidClosed,
       isMouthYawning,
       isHeadTurned,
+      isHeadDown,
       isDistracted,
       abnormalBehavior: isHeadSlump,
       consecutiveClosedFrames,
+      consecutiveHeadDownFrames,
       consecutiveYawnFrames,
       consecutiveDistractedFrames,
       isLowLight: avgLuminance < 28,

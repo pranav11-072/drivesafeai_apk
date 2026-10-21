@@ -7,7 +7,7 @@ import {
   Play, Square, ExternalLink, Bell
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { DriverState, AlertLevel, GeminiFrameAnalysisResult } from '../types';
+import { DriverState, AlertLevel, GeminiFrameAnalysisResult, DrowsinessEvent } from '../types';
 import { soundManager } from '../utils/audio';
 import type { FaceWorkerOutput, FaceWorkerInput, PotentialSafetyEventType } from '../workers/faceWorker';
 import {
@@ -16,7 +16,6 @@ import {
   render68LandmarkMesh,
   render3DHeadPosePnP,
   renderGazeVector,
-  renderOscilloscope,
   renderSubpixelBBox,
   SignalSample,
 } from '../utils/dmsRenderer';
@@ -27,6 +26,8 @@ interface CameraHUDProps {
   isMonitoring: boolean;
   onToggleMonitoring?: (forceState?: boolean) => void;
   isMobileMode?: boolean;
+  onRecordSafetyEvent?: (event: DrowsinessEvent) => void;
+  onOpenHistoryModal?: () => void;
 }
 
 interface SafetyEventRecord {
@@ -45,6 +46,8 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
   isMonitoring,
   onToggleMonitoring,
   isMobileMode = false,
+  onRecordSafetyEvent,
+  onOpenHistoryModal,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -137,15 +140,19 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     driverStateRef.current = driverState;
   }, [driverState]);
 
+  // Face Feed Aspect & Orientation: Default to Portrait Style as requested
+  const [feedOrientation, setFeedOrientation] = useState<'portrait' | 'landscape'>('portrait');
+
   // Automotive DMS Engineering Diagnostics & Telemetry
   const [hudViewMode, setHudViewMode] = useState<'DIAGNOSTIC' | 'OPERATIONAL'>('DIAGNOSTIC');
   const [showPoseAxes, setShowPoseAxes] = useState<boolean>(true);
-  const [showOscilloscope, setShowOscilloscope] = useState<boolean>(true);
+  const [showOscilloscope, setShowOscilloscope] = useState<boolean>(false); // Graph bar removed from feed
   const [showMesh68, setShowMesh68] = useState<boolean>(true);
   const [showCalibrationRegisters, setShowCalibrationRegisters] = useState<boolean>(false);
   const [earThreshold, setEarThreshold] = useState<number>(0.21);
   const [marThreshold, setMarThreshold] = useState<number>(0.45);
   const [yawThreshold, setYawThreshold] = useState<number>(20.0);
+  const [pitchDownThreshold, setPitchDownThreshold] = useState<number>(11.0); // High sensitivity to head tilting down
   const [debounceFrames, setDebounceFrames] = useState<number>(8);
 
   const signalHistoryRef = useRef<SignalSample[]>([]);
@@ -620,6 +627,11 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         }
 
         const isEyesClosed = data.metrics.isEyelidClosed || (data.metrics.ear < earThreshold && data.metrics.consecutiveClosedFrames >= 4) || data.potentialSafetyEvent === 'PROLONGED_EYE_CLOSURE';
+        const isHeadDownNow = Boolean(
+          data.metrics.isHeadDown ||
+          data.metrics.pitch > pitchDownThreshold ||
+          data.potentialSafetyEvent === 'HEAD_DOWN'
+        );
 
         // ZERO-LATENCY REAL-TIME ON-DEVICE SAFETY ALARM ENGINE:
         // Sounds critical alarms and warns driver immediately without waiting for network or cloud round-trips
@@ -628,6 +640,20 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           soundManager.playCriticalAlarm(true);
           soundManager.speakText("Warning! Wake up! Eyes closed detected!", true);
           setActiveEventTrigger('PROLONGED_EYE_CLOSURE');
+
+          if (!driverStateRef.current.eyesClosed && onRecordSafetyEvent) {
+            onRecordSafetyEvent({
+              id: `ec-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              timestamp: new Date().toLocaleTimeString(),
+              date: new Date().toLocaleDateString(),
+              type: 'EYES_CLOSED',
+              severity: 'CRITICAL',
+              title: 'Micro-Sleep / Eyes Closed',
+              description: `Eyelid closure detected (EAR: ${data.metrics.ear.toFixed(2)}).`,
+              ear: data.metrics.ear,
+              pitchDeg: data.metrics.pitch,
+            });
+          }
 
           setDriverState(prev => ({
             ...prev,
@@ -645,12 +671,63 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           setDriverState(prev => ({
             ...prev,
             eyesClosed: false,
-            alertLevel: prev.isYawning || prev.isDistracted ? 'YELLOW' : 'GREEN',
+            alertLevel: prev.isYawning || prev.isDistracted || isHeadDownNow ? 'YELLOW' : 'GREEN',
             lastAiMessage: "Driver alert: Eyes reopened. Attentive on road.",
+          }));
+        } else if (isHeadDownNow && !driverStateRef.current.isHeadDown) {
+          // HEAD DOWN SENSITIVE BEEP & WARNING
+          soundManager.unlockAudioContext();
+          soundManager.playWarningBeep();
+          soundManager.speakText("Warning! Head down detected, eyes on the road!");
+          setActiveEventTrigger('HEAD_DOWN');
+
+          if (onRecordSafetyEvent) {
+            onRecordSafetyEvent({
+              id: `hd-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              timestamp: new Date().toLocaleTimeString(),
+              date: new Date().toLocaleDateString(),
+              type: 'HEAD_DOWN',
+              severity: 'WARNING',
+              title: 'Head Down / Nodding Off',
+              description: `Head tilted down at +${data.metrics.pitch}° (threshold: +${pitchDownThreshold}°).`,
+              pitchDeg: data.metrics.pitch,
+              ear: data.metrics.ear,
+            });
+          }
+
+          setDriverState(prev => ({
+            ...prev,
+            isHeadDown: true,
+            headPitch: data.metrics.pitch,
+            isDistracted: true,
+            alertLevel: prev.alertLevel === 'RED' ? 'RED' : 'YELLOW',
+            distractionCount: prev.distractionCount + 1,
+            lastAiMessage: `Warning: Head down nod detected (+${data.metrics.pitch}°). Keep head upright and eyes on road!`,
+          }));
+        } else if (!isHeadDownNow && driverStateRef.current.isHeadDown) {
+          setDriverState(prev => ({
+            ...prev,
+            isHeadDown: false,
+            headPitch: data.metrics.pitch,
+            lastAiMessage: prev.eyesClosed ? prev.lastAiMessage : "Driver posture upright. Keep focused on road.",
           }));
         } else if (data.metrics.isMouthYawning && !driverStateRef.current.isYawning) {
           soundManager.playWarningBeep();
           setActiveEventTrigger('YAWNING');
+
+          if (onRecordSafetyEvent) {
+            onRecordSafetyEvent({
+              id: `yw-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              timestamp: new Date().toLocaleTimeString(),
+              date: new Date().toLocaleDateString(),
+              type: 'YAWNING',
+              severity: 'MODERATE',
+              title: 'Yawning / Drowsiness Accumulating',
+              description: `Mouth open ratio MAR: ${data.metrics.mar.toFixed(2)}.`,
+              ear: data.metrics.ear,
+            });
+          }
+
           setDriverState(prev => ({
             ...prev,
             isYawning: true,
@@ -658,9 +735,23 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             yawnCount: prev.yawnCount + 1,
             lastAiMessage: "Warning: Yawning detected. Fatigue accumulating.",
           }));
-        } else if (data.metrics.isDistracted && !driverStateRef.current.isDistracted) {
+        } else if (data.metrics.isDistracted && !driverStateRef.current.isDistracted && !isHeadDownNow) {
           soundManager.playWarningBeep();
           setActiveEventTrigger('DISTRACTION');
+
+          if (onRecordSafetyEvent) {
+            onRecordSafetyEvent({
+              id: `ds-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+              timestamp: new Date().toLocaleTimeString(),
+              date: new Date().toLocaleDateString(),
+              type: 'DISTRACTION',
+              severity: 'WARNING',
+              title: 'Distraction / Looking Away',
+              description: `Head turned off-axis with Yaw: ${data.metrics.yaw}°.`,
+              pitchDeg: data.metrics.pitch,
+            });
+          }
+
           setDriverState(prev => ({
             ...prev,
             isDistracted: true,
@@ -781,9 +872,11 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
               isEyelidClosed: isSimClosed,
               isMouthYawning: isSimYawning,
               isHeadTurned: isSimDistracted,
+              isHeadDown: isSimAbnormal,
               isDistracted: isSimDistracted,
               abnormalBehavior: isSimAbnormal,
               consecutiveClosedFrames: isSimClosed ? 10 : 0,
+              consecutiveHeadDownFrames: isSimAbnormal ? 10 : 0,
               consecutiveYawnFrames: isSimYawning ? 10 : 0,
               consecutiveDistractedFrames: isSimDistracted ? 12 : 0,
             },
@@ -958,18 +1051,6 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             });
             if (signalHistoryRef.current.length > 80) {
               signalHistoryRef.current.shift();
-            }
-
-            // 3G. Render Real-Time Rolling Signal Oscilloscope Strip
-            if (showOscilloscope) {
-              renderOscilloscope(
-                octx,
-                signalHistoryRef.current,
-                W,
-                H,
-                earThreshold,
-                marThreshold
-              );
             }
 
             // Top Status Banner
@@ -1169,14 +1250,39 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
   if (isMobileMode) {
     return (
       <div id="mobile-live-camera-card" className="w-full">
-        <div className="text-center mb-2">
-          <span className="text-[11px] font-mono font-bold tracking-[0.2em] text-slate-400 uppercase">
-            LIVE CAMERA
-          </span>
+        <div className="flex items-center justify-between mb-2 px-1">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[11px] font-mono font-bold tracking-[0.2em] text-slate-300 uppercase">
+              LIVE CAMERA
+            </span>
+            <span className="px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-400 font-mono text-[9px] font-bold">
+              {feedOrientation === 'portrait' ? 'PORTRAIT' : 'LANDSCAPE'}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            {onOpenHistoryModal && (
+              <button
+                onClick={onOpenHistoryModal}
+                className="text-[10px] font-medium text-red-300 hover:text-white px-2 py-0.5 rounded-lg bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 flex items-center gap-1 transition-colors"
+                title="View Drowsiness Event History"
+              >
+                <Bell className="w-2.5 h-2.5 text-red-400" />
+                <span>History</span>
+              </button>
+            )}
+            <button
+              onClick={() => setFeedOrientation(prev => prev === 'portrait' ? 'landscape' : 'portrait')}
+              className="text-[10px] font-mono text-slate-300 hover:text-white px-2 py-0.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
+              title="Toggle Portrait / Landscape feed"
+            >
+              {feedOrientation === 'portrait' ? '3:4 View' : '16:9 View'}
+            </button>
+          </div>
         </div>
 
         {/* Video / Camera Canvas Container */}
-        <div className="relative w-full aspect-video bg-slate-950/95 rounded-2xl overflow-hidden border border-white/15 shadow-inner flex items-center justify-center">
+        <div className={`relative w-full ${feedOrientation === 'portrait' ? 'aspect-[3/4] max-h-[440px]' : 'aspect-video'} bg-slate-950/95 rounded-2xl overflow-hidden border border-white/15 shadow-inner flex items-center justify-center transition-all duration-300`}>
           {/* Live Camera Video Feed (always mounted so videoRef is constantly bound) */}
           <video
             ref={videoRef}
@@ -1224,6 +1330,8 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                   <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
                   {driverState.eyesClosed
                     ? 'MICRO-SLEEP'
+                    : driverState.isHeadDown
+                    ? 'HEAD DOWN'
                     : driverState.isYawning
                     ? 'YAWNING'
                     : driverState.isDistracted
@@ -1409,7 +1517,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
   return (
     <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-4 shadow-2xl shadow-black/50 flex flex-col justify-between h-full">
       {/* Video / Camera Canvas Container */}
-      <div className="relative w-full aspect-video bg-slate-950/90 rounded-2xl overflow-hidden border border-white/10 flex items-center justify-center">
+      <div className={`relative w-full ${feedOrientation === 'portrait' ? 'aspect-[3/4] max-h-[480px] max-w-sm mx-auto' : 'aspect-video'} bg-slate-950/90 rounded-2xl overflow-hidden border border-white/10 flex items-center justify-center transition-all duration-300`}>
         {/* Live Camera Video Feed (always mounted so videoRef is constantly bound) */}
         <video
           ref={videoRef}
@@ -1461,6 +1569,8 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                   <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
                   {driverState.eyesClosed
                     ? 'MICRO-SLEEP'
+                    : driverState.isHeadDown
+                    ? 'HEAD DOWN'
                     : driverState.isYawning
                     ? 'YAWN / FATIGUE'
                     : driverState.isDistracted
@@ -1481,10 +1591,29 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
               {/* Right: Camera Source & Quick Controls */}
               <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setFeedOrientation(prev => prev === 'portrait' ? 'landscape' : 'portrait')}
+                  className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/20 border border-white/20 text-slate-200 hover:text-white text-[10px] font-mono transition-colors"
+                  title="Toggle Portrait / Landscape feed"
+                >
+                  {feedOrientation === 'portrait' ? '3:4 Portrait' : '16:9 Wide'}
+                </button>
+
+                {onOpenHistoryModal && (
+                  <button
+                    onClick={onOpenHistoryModal}
+                    className="px-2 py-0.5 rounded-md bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-white text-[11px] font-medium flex items-center gap-1 transition-all"
+                    title="View Trip Drowsiness Event History"
+                  >
+                    <Bell className="w-3 h-3 text-red-400" />
+                    <span>History</span>
+                  </button>
+                )}
+
                 {activeStreamRef.current && !isSimulatorMode ? (
                   <div className="flex items-center gap-1.5 text-[11px] text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded-md border border-emerald-500/20 font-medium">
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                    <span>Live Webcam</span>
+                    <span>Live</span>
                   </div>
                 ) : isSimulatorMode ? (
                   <div className="flex items-center gap-1.5">
@@ -1498,7 +1627,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                       title="Switch to live physical camera"
                     >
                       <Video className="w-3 h-3 text-sky-400" />
-                      <span>Connect Cam</span>
+                      <span>Cam</span>
                     </button>
                   </div>
                 ) : (
@@ -1508,7 +1637,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                     title="Connect physical camera"
                   >
                     <VideoOff className="w-3 h-3 text-amber-400" />
-                    <span>Connect Live Cam</span>
+                    <span>Connect</span>
                   </button>
                 )}
 
@@ -1517,7 +1646,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                   <select
                     value={selectedCameraId}
                     onChange={(e) => handleSelectCamera(e.target.value)}
-                    className="bg-slate-900/90 text-slate-200 border border-white/10 rounded px-1.5 py-0.5 text-[10px] focus:outline-none focus:border-sky-400 max-w-[120px] truncate"
+                    className="bg-slate-900/90 text-slate-200 border border-white/10 rounded px-1.5 py-0.5 text-[10px] focus:outline-none focus:border-sky-400 max-w-[100px] truncate"
                     title="Select video input device"
                   >
                     {availableCameras.map(cam => (
@@ -1768,21 +1897,14 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             >
               PNP AXES: {showPoseAxes ? 'ENABLED' : 'DISABLED'}
             </button>
-            <button
-              onClick={() => setShowOscilloscope(v => !v)}
-              className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-colors ${
-                showOscilloscope
-                  ? 'bg-sky-500/20 text-sky-300 border-sky-500/50'
-                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
-              }`}
-            >
-              OSCILLOSCOPE: {showOscilloscope ? 'ENABLED' : 'DISABLED'}
-            </button>
+            <div className="px-1.5 py-0.5 rounded text-[9px] font-bold border bg-rose-500/20 text-rose-300 border-rose-500/50">
+              HEAD-DOWN SENSITIVITY: HIGH
+            </div>
           </div>
         </div>
 
         {/* Engineering Calibration Sliders */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-slate-300">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-2 text-slate-300">
           <div className="flex items-center gap-2 bg-slate-950/70 px-2 py-1 rounded border border-slate-800">
             <span className="text-slate-400 shrink-0">EAR_TH:</span>
             <input
@@ -1795,6 +1917,21 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
               className="w-full accent-sky-400 h-1 bg-slate-700 rounded cursor-pointer"
             />
             <span className="text-sky-300 font-bold shrink-0 w-8 text-right">{earThreshold.toFixed(2)}</span>
+          </div>
+
+          <div className="flex items-center gap-2 bg-slate-950/70 px-2 py-1 rounded border border-slate-800">
+            <span className="text-slate-400 shrink-0">HEAD_DOWN:</span>
+            <input
+              type="range"
+              min="8"
+              max="20"
+              step="0.5"
+              value={pitchDownThreshold}
+              onChange={(e) => setPitchDownThreshold(parseFloat(e.target.value))}
+              className="w-full accent-rose-400 h-1 bg-slate-700 rounded cursor-pointer"
+              title="Sensitivity threshold for head tilting down / nodding off"
+            />
+            <span className="text-rose-300 font-bold shrink-0 w-8 text-right">+{pitchDownThreshold}°</span>
           </div>
 
           <div className="flex items-center gap-2 bg-slate-950/70 px-2 py-1 rounded border border-slate-800">

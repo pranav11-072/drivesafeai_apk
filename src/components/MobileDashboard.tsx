@@ -4,7 +4,7 @@ import {
   RotateCcw, Sparkles, Navigation, CheckCircle2, ChevronRight, X, ExternalLink, Play
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { DriverState, SpeedData, CabinLightConfig, EmergencyContact } from '../types';
+import { DriverState, SpeedData, CabinLightConfig, EmergencyContact, DrowsinessEvent } from '../types';
 import { CameraHUD } from './CameraHUD';
 import { soundManager } from '../utils/audio';
 import { useHarshDrivingDetector } from '../hooks/useHarshDrivingDetector';
@@ -21,6 +21,9 @@ interface MobileDashboardProps {
   onToggleMute: () => void;
   onSwitchToDesktopView?: () => void;
   onOpenScorecard?: () => void;
+  onOpenHistory?: () => void;
+  eventCount?: number;
+  onRecordSafetyEvent?: (event: DrowsinessEvent) => void;
   onRetryGps?: () => void;
   isRandomRunning?: boolean;
   onToggleRandomRunning?: (enabled: boolean) => void;
@@ -38,6 +41,9 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
   onToggleMute,
   onSwitchToDesktopView,
   onOpenScorecard,
+  onOpenHistory,
+  eventCount,
+  onRecordSafetyEvent,
   onRetryGps,
   isRandomRunning,
   onToggleRandomRunning,
@@ -462,6 +468,8 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
           isMonitoring={isMonitoring}
           onToggleMonitoring={onToggleMonitoring}
           isMobileMode={true}
+          onRecordSafetyEvent={onRecordSafetyEvent}
+          onOpenHistoryModal={onOpenHistory}
         />
       </section>
 
@@ -644,13 +652,21 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
 
         <span className="text-white/20">|</span>
 
-        {/* Cabin Light Status */}
-        <div className="flex items-center gap-2">
-          <span className="text-slate-400 font-bold">CABIN LIGHT:</span>
-          <span className={`flex items-center gap-1.5 font-bold ${cabinLightStatus.color}`}>
-            <span className={`w-2 h-2 rounded-full ${cabinLightStatus.dot}`}></span>
-            <span>{cabinLightStatus.label}</span>
-          </span>
+        {/* Trip Drowsiness & Safety Events Log */}
+        <div className="flex items-center gap-1.5">
+          <span className="text-slate-400 font-bold">EVENTS:</span>
+          {onOpenHistory ? (
+            <button
+              onClick={onOpenHistory}
+              className="flex items-center gap-1 font-bold text-red-300 hover:text-white px-2 py-0.5 rounded bg-red-500/15 hover:bg-red-500/25 border border-red-500/30 transition-colors"
+              title="Open Trip Drowsiness Event History"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-red-400 animate-pulse"></span>
+              <span>{eventCount ?? 0} LOGGED</span>
+            </button>
+          ) : (
+            <span className="text-slate-300 font-bold">{eventCount ?? 0}</span>
+          )}
         </div>
       </footer>
 

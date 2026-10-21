@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, Volume2, VolumeX, AlertTriangle, Play, Square, Award, Smartphone, Monitor } from 'lucide-react';
+import { Shield, Volume2, VolumeX, AlertTriangle, Play, Square, Award, Smartphone, Monitor, Clock } from 'lucide-react';
 import { soundManager } from '../utils/audio';
 
 interface HeaderProps {
@@ -7,10 +7,11 @@ interface HeaderProps {
   onToggleMonitoring: () => void;
   onOpenAndroidExport?: () => void;
   onOpenScorecard: () => void;
+  onOpenHistory?: () => void;
+  eventCount?: number;
   isMuted: boolean;
   onToggleMute: () => void;
   alertLevel: 'GREEN' | 'YELLOW' | 'RED';
-  cabinLightStatus?: 'connected' | 'off' | 'unavailable';
   viewMode?: 'mobile' | 'desktop';
   onToggleViewMode?: (mode: 'mobile' | 'desktop') => void;
 }
@@ -19,10 +20,11 @@ export const Header: React.FC<HeaderProps> = ({
   isMonitoring,
   onToggleMonitoring,
   onOpenScorecard,
+  onOpenHistory,
+  eventCount,
   isMuted,
   onToggleMute,
   alertLevel,
-  cabinLightStatus,
   viewMode,
   onToggleViewMode,
 }) => {
@@ -85,30 +87,22 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
 
-          {/* Cabin Light Quick Status Pill */}
-          {cabinLightStatus && (
-            <div
-              id="header-cabin-light-status"
-              className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs font-mono"
+          {/* Trip Drowsiness & Safety Events History Button */}
+          {onOpenHistory && (
+            <button
+              onClick={onOpenHistory}
+              id="btn-open-drowsiness-history"
+              className="flex items-center gap-1.5 px-3 py-1.5 sm:px-3 sm:py-2 rounded-xl backdrop-blur-md bg-red-500/15 border border-red-400/30 text-red-300 hover:bg-red-500/25 text-xs sm:text-sm font-medium transition-all shadow-lg shadow-red-950/40"
+              title="View timestamped drowsiness and distraction event history"
             >
-              <span className="text-slate-400 text-[10px] font-bold tracking-wider">CABIN LIGHT</span>
-              {cabinLightStatus === 'connected' ? (
-                <span className="flex items-center gap-1 text-emerald-300 text-[11px] font-bold">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                  ACTIVE
-                </span>
-              ) : cabinLightStatus === 'off' ? (
-                <span className="flex items-center gap-1 text-amber-300 text-[11px] font-bold">
-                  <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                  OFF
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 text-slate-400 text-[11px] font-bold">
-                  <span className="w-2 h-2 rounded-full bg-slate-500"></span>
-                  UNAVAILABLE
+              <Clock className="w-4 h-4 text-red-400" />
+              <span className="hidden sm:inline">Event History</span>
+              {typeof eventCount === 'number' && eventCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-red-500 text-white font-mono text-[10px] font-bold">
+                  {eventCount}
                 </span>
               )}
-            </div>
+            </button>
           )}
 
           {/* Trip Scorecard Button */}

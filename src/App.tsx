@@ -7,14 +7,14 @@ import { SafetyMetrics } from './components/SafetyMetrics';
 import { EmergencySOS } from './components/EmergencySOS';
 import { TripTracker } from './components/TripTracker';
 import { RestStopNavigator } from './components/RestStopNavigator';
-import { AmbientCabinLight } from './components/AmbientCabinLight';
 import { CircadianPredictor } from './components/CircadianPredictor';
 import { IncidentRecorder } from './components/IncidentRecorder';
 import { TripScorecard } from './components/TripScorecard';
 import { AndroidExportModal } from './components/AndroidExportModal';
+import { DrowsinessHistoryModal } from './components/DrowsinessHistoryModal';
 import { MobileDashboard } from './components/MobileDashboard';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { DriverState, SpeedData } from './types';
+import { DriverState, SpeedData, DrowsinessEvent } from './types';
 import { soundManager } from './utils/audio';
 import { useGpsTracker } from './hooks/useGpsTracker';
 import { useCabinLighting } from './hooks/useCabinLighting';
@@ -133,6 +133,16 @@ export default function App() {
   const [isMuted, setIsMuted] = useState(false);
   const [isAndroidExportOpen, setIsAndroidExportOpen] = useState(false);
   const [isScorecardOpen, setIsScorecardOpen] = useState(false);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [tripSafetyEvents, setTripSafetyEvents] = useState<DrowsinessEvent[]>([]);
+
+  const handleRecordSafetyEvent = React.useCallback((event: DrowsinessEvent) => {
+    setTripSafetyEvents(prev => [event, ...prev].slice(0, 150));
+  }, []);
+
+  const handleClearSafetyEvents = React.useCallback(() => {
+    setTripSafetyEvents([]);
+  }, []);
 
   // Cabin Lighting State & Vehicle Hardware Architecture
   const cabinLight = useCabinLighting(driverState);
@@ -192,6 +202,9 @@ export default function App() {
               onToggleMute={handleToggleMute}
               onSwitchToDesktopView={() => setViewMode('desktop')}
               onOpenScorecard={() => setIsScorecardOpen(true)}
+              onOpenHistory={() => setIsHistoryModalOpen(true)}
+              eventCount={tripSafetyEvents.length}
+              onRecordSafetyEvent={handleRecordSafetyEvent}
               onRetryGps={gps.retryGps}
               isRandomRunning={gps.isRandomRunning}
               onToggleRandomRunning={gps.setIsRandomRunning}
@@ -200,7 +213,14 @@ export default function App() {
           </ErrorBoundary>
 
           {/* Minimal Mobile Utility Navigation */}
-          <div className="text-center py-2 text-[11px] text-slate-500 flex items-center justify-center gap-3">
+          <div className="text-center py-2 text-[11px] text-slate-500 flex flex-wrap items-center justify-center gap-3">
+            <button
+              onClick={() => setIsHistoryModalOpen(true)}
+              className="text-red-400 hover:underline font-medium"
+            >
+              📋 History ({tripSafetyEvents.length})
+            </button>
+            <span className="text-slate-700">•</span>
             <button
               onClick={() => setIsScorecardOpen(true)}
               className="text-amber-400 hover:underline font-medium"
@@ -231,10 +251,11 @@ export default function App() {
               isMonitoring={driverState.isMonitoring}
               onToggleMonitoring={() => handleToggleMonitoring()}
               onOpenScorecard={() => setIsScorecardOpen(true)}
+              onOpenHistory={() => setIsHistoryModalOpen(true)}
+              eventCount={tripSafetyEvents.length}
               isMuted={isMuted}
               onToggleMute={handleToggleMute}
               alertLevel={driverState.alertLevel}
-              cabinLightStatus={cabinLight.config.hardwareStatus}
               viewMode={activeView}
               onToggleViewMode={(mode) => setViewMode(mode)}
             />
@@ -260,6 +281,8 @@ export default function App() {
                     setDriverState={setDriverState}
                     isMonitoring={driverState.isMonitoring}
                     onToggleMonitoring={handleToggleMonitoring}
+                    onRecordSafetyEvent={handleRecordSafetyEvent}
+                    onOpenHistoryModal={() => setIsHistoryModalOpen(true)}
                   />
                 </ErrorBoundary>
               </div>
@@ -314,32 +337,15 @@ export default function App() {
               </ErrorBoundary>
             </div>
 
-            {/* New Feature Section: Smart Rest Stop & Route Navigator + Ambient Cabin Light */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="lg:col-span-2">
-                <RestStopNavigator
-                  driverState={driverState}
-                  speedData={speedData}
-                />
-              </div>
-              <div className="lg:col-span-1">
-                <AmbientCabinLight
-                  driverState={driverState}
-                  config={cabinLight.config}
-                  setConfig={cabinLight.setConfig}
-                  isTestFlashing={cabinLight.isTestFlashing}
-                  hardwareMessage={cabinLight.hardwareMessage}
-                  onConnectBluetooth={cabinLight.connectBluetooth}
-                  onConnectSerial={cabinLight.connectSerial}
-                  onDisconnectHardware={cabinLight.disconnectHardware}
-                  onSetHardwareState={cabinLight.setHardwareState}
-                  onTogglePower={cabinLight.togglePower}
-                  onTriggerTestFlash={cabinLight.triggerTestFlash}
-                />
-              </div>
+            {/* Feature Section: Smart Rest Stop & Route Navigator */}
+            <div className="w-full">
+              <RestStopNavigator
+                driverState={driverState}
+                speedData={speedData}
+              />
             </div>
 
-            {/* New Feature Section: Circadian Predictor + Incident Dashcam Recorder */}
+            {/* Feature Section: Circadian Predictor + Incident Dashcam Recorder */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               <CircadianPredictor
                 driverState={driverState}
@@ -356,6 +362,13 @@ export default function App() {
             <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
               <span>DriveSafe AI • Real-Time Driver Safety & Drowsiness Alert System</span>
               <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setIsHistoryModalOpen(true)}
+                  className="text-red-400 hover:underline font-semibold"
+                >
+                  📋 Event History ({tripSafetyEvents.length})
+                </button>
+                <span className="text-slate-700">•</span>
                 <button
                   onClick={() => setIsScorecardOpen(true)}
                   className="text-amber-400 hover:underline font-semibold"
@@ -374,6 +387,15 @@ export default function App() {
           </footer>
         </>
       )}
+
+      {/* Trip Drowsiness & Safety Events History Modal */}
+      <DrowsinessHistoryModal
+        isOpen={isHistoryModalOpen}
+        onClose={() => setIsHistoryModalOpen(false)}
+        events={tripSafetyEvents}
+        onClearEvents={handleClearSafetyEvents}
+        driverState={driverState}
+      />
 
       {/* Trip Scorecard & Risk Summary Modal */}
       <TripScorecard
