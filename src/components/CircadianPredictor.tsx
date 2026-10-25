@@ -73,18 +73,7 @@ export const CircadianPredictor: React.FC<CircadianPredictorProps> = ({
     circadianLabel = 'Night Window — Elevated Sleep Propensity';
   }
 
-  // 24-Hour Circadian Alertness Curve points
-  const hourlyData: { hour: number; label: string; alertness: number; risk: string }[] = [
-    { hour: 0, label: '12am', alertness: 40, risk: 'HIGH' },
-    { hour: 3, label: '3am', alertness: 15, risk: 'CRITICAL' },
-    { hour: 6, label: '6am', alertness: 55, risk: 'MEDIUM' },
-    { hour: 9, label: '9am', alertness: 92, risk: 'LOW' },
-    { hour: 12, label: '12pm', alertness: 88, risk: 'LOW' },
-    { hour: 14, label: '2pm', alertness: 60, risk: 'MEDIUM' },
-    { hour: 17, label: '5pm', alertness: 85, risk: 'LOW' },
-    { hour: 20, label: '8pm', alertness: 78, risk: 'LOW' },
-    { hour: 23, label: '11pm', alertness: 48, risk: 'HIGH' },
-  ];
+
 
   // Next 4-Hour Projected Fatigue Forecast
   const projectedHours = [
@@ -163,41 +152,34 @@ export const CircadianPredictor: React.FC<CircadianPredictorProps> = ({
           </div>
         </div>
 
-        {/* 24-Hour Circadian Biological Alertness Wave Chart */}
-        <div className="p-3 rounded-xl bg-slate-950/80 border border-white/10 mb-3">
-          <div className="flex items-center justify-between text-[11px] text-slate-300 mb-2">
-            <span className="font-semibold flex items-center gap-1">
-              <Sparkles className="w-3 h-3 text-indigo-400" />
-              24-Hour Biological Wakefulness Curve
-            </span>
-            <span className="text-[10px] text-slate-400">Graveyard Dip: 02:00 - 06:00</span>
+        {/* Chronobiological Alertness Windows & Biological Rhythms (Graph Removed) */}
+        <div className="grid grid-cols-2 gap-2 mb-3 text-xs">
+          <div className="p-2.5 rounded-xl bg-slate-950/80 border border-white/10">
+            <span className="text-[10px] text-slate-400 block font-semibold">Circadian Vulnerability Windows</span>
+            <div className="mt-1 space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-red-400 font-medium">02:00 - 06:00</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 text-red-300 font-bold">Graveyard Dip</span>
+              </div>
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="text-amber-400 font-medium">13:00 - 15:00</span>
+                <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-bold">Post-Lunch</span>
+              </div>
+            </div>
           </div>
 
-          {/* Bar Chart Representation */}
-          <div className="grid grid-cols-9 gap-1 h-16 items-end">
-            {hourlyData.map((item, idx) => {
-              const isCurrent = Math.abs(currentHour - item.hour) < 2;
-              return (
-                <div key={idx} className="flex flex-col items-center gap-1 h-full justify-end">
-                  <div
-                    style={{ height: `${item.alertness}%` }}
-                    className={`w-full rounded-t transition-all ${
-                      item.risk === 'CRITICAL'
-                        ? 'bg-red-500/80 shadow-sm shadow-red-500/50'
-                        : item.risk === 'HIGH'
-                        ? 'bg-orange-500/80'
-                        : item.risk === 'MEDIUM'
-                        ? 'bg-amber-500/80'
-                        : 'bg-emerald-500/80'
-                    } ${isCurrent ? 'ring-2 ring-white' : ''}`}
-                    title={`${item.label}: ${item.alertness}% Alertness (${item.risk})`}
-                  />
-                  <span className={`text-[9px] font-mono ${isCurrent ? 'text-white font-bold' : 'text-slate-500'}`}>
-                    {item.label}
-                  </span>
-                </div>
-              );
-            })}
+          <div className="p-2.5 rounded-xl bg-slate-950/80 border border-white/10 flex flex-col justify-between">
+            <div>
+              <span className="text-[10px] text-slate-400 block font-semibold">Active Fatigue Mitigation</span>
+              <span className="text-[11px] text-slate-200 mt-1 block">
+                {isGraveyardZone
+                  ? "High sleep pressure active. Mandatory break recommended."
+                  : isPostLunchDip
+                  ? "Mild natural drowsiness dip. Keep cabin ventilated."
+                  : "Normal biological alertness window. Drive safely."}
+              </span>
+            </div>
+            <span className="text-[9px] text-sky-400 font-mono mt-1">SAE J3016 Chrono-Audit OK</span>
           </div>
         </div>
 

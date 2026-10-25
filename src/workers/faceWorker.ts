@@ -78,8 +78,14 @@ let consecutiveLostFrames = 0;
 let consecutiveClosedFrames = 0;
 let consecutiveHeadDownFrames = 0;
 let consecutiveYawnFrames = 0;
+let consecutiveTurnedFrames = 0; // Tracks duration of looking away / in different direction
 let consecutiveDistractedFrames = 0;
 let consecutiveAbnormalFrames = 0;
+
+let runningOpenEarBaseline = 0.32; // Calibrates to driver's personal eye aperture
+let runningNeutralPitch = 0.0;     // Calibrates to driver's personal upright posture
+let smoothedYaw = 0;
+let smoothedPitch = 0;
 
 let prevEar = 0.32;
 let prevMar = 0.14;
@@ -317,27 +323,35 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
   const leftAnalysis = analyzeEyeRegion(leftEyeCenterX, eyeCenterPixelY);
   const rightAnalysis = analyzeEyeRegion(rightEyeCenterX, eyeCenterPixelY);
 
-  // Both eyes or the clearly visible eye indicating closure
-  const isEyeClosedInstant = (leftAnalysis.isClosed && rightAnalysis.isClosed) ||
-    ((leftAnalysis.ear + rightAnalysis.ear) / 2 < 0.18) ||
-    (leftAnalysis.isClosed && rightAnalysis.ear < 0.20) ||
-    (rightAnalysis.isClosed && leftAnalysis.ear < 0.20);
-
   // Instantaneous EAR averaged across eyes
   const instantEar = (leftAnalysis.ear + rightAnalysis.ear) / 2;
 
+  // Adapt dynamic open-eye baseline when driver is attentively looking forward
+  if (!leftAnalysis.isClosed && !rightAnalysis.isClosed && instantEar > 0.22) {
+    runningOpenEarBaseline = runningOpenEarBaseline * 0.96 + instantEar * 0.04;
+  }
+
+  // High-accuracy adaptive closure detection:
+  // Combines local pupil detection, contrast spread, and relative aperture drop from driver baseline
+  const isRelativeClosure = instantEar < (runningOpenEarBaseline * 0.58);
+  const isEyeClosedInstant = (leftAnalysis.isClosed && rightAnalysis.isClosed) ||
+    isRelativeClosure ||
+    (instantEar < 0.17) ||
+    (leftAnalysis.isClosed && rightAnalysis.ear < 0.20) ||
+    (rightAnalysis.isClosed && leftAnalysis.ear < 0.20);
+
   // Leaky integrator for temporal stability:
-  // Normal blink: lasts 1-3 frames (~150-300ms) -> won't trigger alarm.
-  // Micro-sleep / prolonged eye closure: 5+ frames (~500ms+) -> triggers immediate alarm!
+  // Normal physiological blink: lasts 1-3 frames (~120-280ms) -> will NOT trigger false alarm.
+  // Micro-sleep / prolonged eye closure: 5+ frames (~500ms+) -> triggers immediate safety alarm!
   if (isEyeClosedInstant) {
     consecutiveClosedFrames += 1;
   } else {
-    // Graceful decay instead of instant reset prevents single-frame sensor noise from resetting a true sleep event
+    // Graceful decay prevents single-frame compression noise from resetting a true micro-sleep
     consecutiveClosedFrames = Math.max(0, consecutiveClosedFrames - 2);
   }
 
-  // Eyelid is flagged as closed if closed for 3+ frames (~300ms)
-  const isEyelidClosed = consecutiveClosedFrames >= 3;
+  // Eyelid is flagged as closed if sustained for 4+ frames (~400ms)
+  const isEyelidClosed = consecutiveClosedFrames >= 4;
 
   // Mouth Zone: lower central region of face box
   const mouthZoneTop = Math.min(height, Math.floor((normCenterY + boxH * 0.08) * height));
@@ -368,20 +382,44 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
     consecutiveYawnFrames = Math.max(0, consecutiveYawnFrames - 2);
   }
 
-  const isMouthYawning = consecutiveYawnFrames >= 6;
+  const isMouthYawning = consecutiveYawnFrames >= 8;
 
   // Head Pose Estimation: 3D angles in degrees (calibrated around center 0.50, 0.46)
-  const yaw = (normCenterX - 0.5) * 52; // Horizontal offset (-26 to +26)
-  const pitch = (normCenterY - 0.46) * 42; // Vertical tilt (positive = DOWNWARD, negative = UPWARD)
+  const rawYaw = (normCenterX - 0.5) * 52; // Horizontal offset (-26 to +26)
+  const rawPitch = (normCenterY - 0.46) * 42; // Vertical tilt (positive = DOWNWARD, negative = UPWARD)
   const roll = 0;
 
-  // Head is turned away if yaw > 18° or tilted up pitch < -15°
-  const isHeadTurned = Math.abs(yaw) > 18 || pitch < -15;
+  // Smoothing filters (EMA) to eliminate frame jitter and sensor noise
+  smoothedYaw = smoothedYaw * 0.65 + rawYaw * 0.35;
+  smoothedPitch = smoothedPitch * 0.65 + rawPitch * 0.35;
 
-  // High-sensitivity Head Down / Nodding Off Detection:
-  // Downward pitch > 10.5° or moving downward (pitch > 7.5° with downward delta > 3.0°)
-  const pitchDelta = pitch - prevPitch;
-  const isHeadDownInstant = pitch > 10.5 || (pitch > 7.5 && pitchDelta > 3.0);
+  // Calibrate neutral upright posture dynamically when driver is facing forward
+  if (hasFace && Math.abs(smoothedYaw) < 14 && !isEyeClosedInstant) {
+    runningNeutralPitch = runningNeutralPitch * 0.98 + smoothedPitch * 0.02;
+  }
+  const relativePitch = smoothedPitch - runningNeutralPitch;
+
+  // Looking in a different direction (head turned left/right or tilted high up)
+  const isHeadTurnedInstant = Math.abs(smoothedYaw) > 22 || relativePitch < -18;
+
+  // INCREASED DELAY FOR LOOKING IN A DIFFERENT DIRECTION:
+  // Normal driver mirror checks, blind-spot glances, and dashboard readings take 1.5 - 2.8 seconds.
+  // Instead of premature beeping after 7 frames (~0.7s), we enforce a generous 36-frame buffer (~3.6 seconds)
+  // before flagging sustained distraction! If the driver looks back forward, the counter resets smoothly.
+  if (isHeadTurnedInstant) {
+    consecutiveTurnedFrames++;
+  } else {
+    consecutiveTurnedFrames = Math.max(0, consecutiveTurnedFrames - 2);
+  }
+
+  // Sustained distraction threshold: 36 consecutive frames (~3.6 seconds of continuous looking away)
+  const isHeadTurnedDistracted = consecutiveTurnedFrames >= 36;
+  const isHeadTurned = isHeadTurnedInstant;
+
+  // Head Down / Nodding Off Detection (calibrated relative to neutral posture):
+  // Highly sensitive to true forward slump/nodding off
+  const pitchDelta = relativePitch - prevPitch;
+  const isHeadDownInstant = relativePitch > 10.0 || (relativePitch > 7.0 && pitchDelta > 2.5);
 
   if (isHeadDownInstant) {
     consecutiveHeadDownFrames++;
@@ -389,9 +427,11 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
     consecutiveHeadDownFrames = Math.max(0, consecutiveHeadDownFrames - 2);
   }
 
-  // Head down flagged after 3 consecutive frames (~300ms) for ultra-responsive safety alerting
-  const isHeadDown = consecutiveHeadDownFrames >= 3;
-  const isDistracted = isHeadTurned || isHeadDown;
+  // Head down flagged after 7 frames (~700ms) for reliable nodding-off catch without nuisance triggers
+  const isHeadDown = consecutiveHeadDownFrames >= 7;
+
+  // Distraction is triggered either by looking away for > 3.6s OR head down nodding
+  const isDistracted = isHeadTurnedDistracted || isHeadDown;
 
   if (isDistracted) {
     consecutiveDistractedFrames++;
@@ -400,35 +440,34 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
   }
 
   // Abnormal / Inattentive Behavior: Head slumping forward / nodding off or distracted with closed eyes
-  const isHeadSlump = isHeadDown || pitch > 13.5;
+  const isHeadSlump = isHeadDown || relativePitch > 13.5;
   if (isHeadSlump || (isDistracted && isEyelidClosed)) {
     consecutiveAbnormalFrames++;
   } else {
     consecutiveAbnormalFrames = Math.max(0, consecutiveAbnormalFrames - 2);
   }
-  prevPitch = prevPitch * 0.5 + pitch * 0.5;
+  prevPitch = prevPitch * 0.6 + relativePitch * 0.4;
 
   // Compute fine-grained EAR & MAR with exponential smoothing
-  // Normal attentive EAR is ~0.30 - 0.36; closed is < 0.16
-  const targetEar = isEyelidClosed ? Math.min(0.14, instantEar) : Math.max(0.25, instantEar);
+  const targetEar = isEyelidClosed ? Math.min(0.12, instantEar) : Math.max(0.26, instantEar);
   const targetMar = isMouthYawning ? 0.68 + Math.random() * 0.04 : 0.12 + Math.random() * 0.02;
 
-  prevEar = prevEar * 0.25 + targetEar * 0.75;
-  prevMar = prevMar * 0.25 + targetMar * 0.75;
+  prevEar = prevEar * 0.30 + targetEar * 0.70;
+  prevMar = prevMar * 0.30 + targetMar * 0.70;
 
   // 3. Potential Safety Event Detection Logic:
-  // - Prolonged Eye Closure: 5+ consecutive closed frames (~500ms+) triggers safety event
-  // - Head Down / Nodding: 3+ consecutive head down frames (~300ms) triggers immediate alert
-  // - Yawning: 8+ consecutive yawn frames (~800ms+)
-  // - Distraction: 7+ consecutive distracted frames (~700ms+)
+  // - Prolonged Eye Closure: 5+ consecutive closed frames (~500ms+) triggers critical micro-sleep
+  // - Head Down / Nodding: 7+ consecutive frames (~700ms) triggers immediate warning
+  // - Yawning: 10+ consecutive yawn frames (~1000ms)
+  // - Distraction (Looking in Different Direction): 36+ consecutive frames (~3.6s sustained looking away)
   let potentialSafetyEvent: PotentialSafetyEventType | null = null;
   if (consecutiveClosedFrames >= 5) {
     potentialSafetyEvent = 'PROLONGED_EYE_CLOSURE';
-  } else if (isHeadDown || consecutiveHeadDownFrames >= 3 || consecutiveAbnormalFrames >= 3) {
+  } else if (isHeadDown || consecutiveHeadDownFrames >= 7 || consecutiveAbnormalFrames >= 6) {
     potentialSafetyEvent = 'HEAD_DOWN';
-  } else if (consecutiveYawnFrames >= 8) {
+  } else if (consecutiveYawnFrames >= 10) {
     potentialSafetyEvent = 'YAWNING';
-  } else if (consecutiveDistractedFrames >= 7) {
+  } else if (consecutiveTurnedFrames >= 36) {
     potentialSafetyEvent = 'DISTRACTION';
   }
 
@@ -509,8 +548,8 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
     metrics: {
       ear: Number(prevEar.toFixed(2)),
       mar: Number(prevMar.toFixed(2)),
-      yaw: Math.round(yaw),
-      pitch: Math.round(pitch),
+      yaw: Math.round(smoothedYaw),
+      pitch: Math.round(relativePitch),
       roll: Math.round(roll),
       isEyelidClosed,
       isMouthYawning,
@@ -521,7 +560,7 @@ self.onmessage = (e: MessageEvent<FaceWorkerInput>) => {
       consecutiveClosedFrames,
       consecutiveHeadDownFrames,
       consecutiveYawnFrames,
-      consecutiveDistractedFrames,
+      consecutiveDistractedFrames: consecutiveTurnedFrames,
       isLowLight: avgLuminance < 28,
       avgLuminance: Math.round(avgLuminance),
     },

@@ -335,29 +335,7 @@ export function render68LandmarkMesh(
     ctx.stroke();
   }
 
-  // Draw Sub-Pixel Landmark Vertex Dots
-  ctx.fillStyle = primaryColor;
-  for (let i = 0; i < 68; i++) {
-    const pt = pts[i];
-    ctx.beginPath();
-    // Critical eye/mouth landmarks get slightly brighter vertices
-    if (i >= 36 && i <= 47) {
-      ctx.fillStyle = isClosed ? '#ef4444' : '#38bdf8';
-      ctx.arc(pt.x, pt.y, 1.4, 0, Math.PI * 2);
-    } else if (i >= 60 && i <= 67) {
-      ctx.fillStyle = isYawn ? '#f59e0b' : '#38bdf8';
-      ctx.arc(pt.x, pt.y, 1.4, 0, Math.PI * 2);
-    } else if (i === 30) {
-      // Nose tip anchor gets highlight
-      ctx.fillStyle = '#ffffff';
-      ctx.arc(pt.x, pt.y, 2.0, 0, Math.PI * 2);
-    } else {
-      ctx.fillStyle = `${primaryColor}aa`;
-      ctx.arc(pt.x, pt.y, 1.1, 0, Math.PI * 2);
-    }
-    ctx.fill();
-  }
-
+  // Note: Face points / landmark dots have been removed per user request for a clean camera feed.
   ctx.restore();
 }
 

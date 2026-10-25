@@ -144,16 +144,75 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
   const [feedOrientation, setFeedOrientation] = useState<'portrait' | 'landscape'>('portrait');
 
   // Automotive DMS Engineering Diagnostics & Telemetry
-  const [hudViewMode, setHudViewMode] = useState<'DIAGNOSTIC' | 'OPERATIONAL'>('DIAGNOSTIC');
-  const [showPoseAxes, setShowPoseAxes] = useState<boolean>(true);
+  const [hudViewMode, setHudViewMode] = useState<'DIAGNOSTIC' | 'OPERATIONAL'>('OPERATIONAL');
+  const [showPoseAxes, setShowPoseAxes] = useState<boolean>(false);
   const [showOscilloscope, setShowOscilloscope] = useState<boolean>(false); // Graph bar removed from feed
-  const [showMesh68, setShowMesh68] = useState<boolean>(true);
+  const [showMesh68, setShowMesh68] = useState<boolean>(false); // Face point mesh removed per user request
   const [showCalibrationRegisters, setShowCalibrationRegisters] = useState<boolean>(false);
   const [earThreshold, setEarThreshold] = useState<number>(0.21);
   const [marThreshold, setMarThreshold] = useState<number>(0.45);
   const [yawThreshold, setYawThreshold] = useState<number>(20.0);
   const [pitchDownThreshold, setPitchDownThreshold] = useState<number>(11.0); // High sensitivity to head tilting down
   const [debounceFrames, setDebounceFrames] = useState<number>(8);
+
+  // Background Execution & Screen Wake Lock
+  const wakeLockRef = useRef<any>(null);
+  const backgroundTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const [isBackgroundActive, setIsBackgroundActive] = useState<boolean>(false);
+  const [notificationsAllowed, setNotificationsAllowed] = useState<boolean>(
+    typeof Notification !== 'undefined' && Notification.permission === 'granted'
+  );
+
+  const requestWakeLock = useCallback(async () => {
+    if (typeof navigator !== 'undefined' && 'wakeLock' in navigator) {
+      try {
+        if (!wakeLockRef.current) {
+          wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+          wakeLockRef.current.addEventListener('release', () => {
+            wakeLockRef.current = null;
+          });
+        }
+      } catch (_) {}
+    }
+  }, []);
+
+  const releaseWakeLock = useCallback(async () => {
+    if (wakeLockRef.current) {
+      try {
+        await wakeLockRef.current.release();
+      } catch (_) {}
+      wakeLockRef.current = null;
+    }
+  }, []);
+
+  const requestNotificationPermission = useCallback(async () => {
+    if (typeof Notification !== 'undefined') {
+      try {
+        const perm = await Notification.requestPermission();
+        setNotificationsAllowed(perm === 'granted');
+        if (perm === 'granted') {
+          soundManager.unlockAudioContext();
+          soundManager.speakText("Background alerts and notifications enabled.");
+        }
+      } catch (err) {
+        console.warn("Notification permission error:", err);
+      }
+    }
+  }, []);
+
+  const sendBackgroundNotification = useCallback((title: string, body: string) => {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'granted' && document.hidden) {
+      try {
+        new Notification(title, {
+          body,
+          icon: '/favicon.ico',
+          tag: 'drivesafe-alert',
+        });
+      } catch (e) {
+        console.warn("Background notification error:", e);
+      }
+    }
+  }, []);
 
   const signalHistoryRef = useRef<SignalSample[]>([]);
   const frameCounterRef = useRef<number>(0);
@@ -355,16 +414,26 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
     }
   }, [isMonitoring, isSimulatorMode, startCameraStream]);
 
-  // Manage camera lifecycle based on isMonitoring state
+  // Manage camera lifecycle and Screen Wake Lock based on isMonitoring state
   useEffect(() => {
     if (isMonitoring && !isSimulatorMode) {
       startCameraStream();
+      requestWakeLock();
+    } else if (isMonitoring && isSimulatorMode) {
+      requestWakeLock();
     } else if (!isMonitoring) {
       stopCameraStream();
+      releaseWakeLock();
       setActiveEventTrigger(null);
+      if (backgroundTimerRef.current) {
+        clearInterval(backgroundTimerRef.current);
+        backgroundTimerRef.current = null;
+      }
+      setIsBackgroundActive(false);
     }
 
     return () => {
+      releaseWakeLock();
       if (activeStreamRef.current) {
         activeStreamRef.current.getTracks().forEach(track => {
           try { track.stop(); } catch (_) {}
@@ -372,7 +441,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
         activeStreamRef.current = null;
       }
     };
-  }, [isMonitoring, isSimulatorMode, startCameraStream, stopCameraStream]);
+  }, [isMonitoring, isSimulatorMode, startCameraStream, stopCameraStream, requestWakeLock, releaseWakeLock]);
 
   // Synchronize active media stream with videoRef whenever mounted or state updates
   useEffect(() => {
@@ -640,6 +709,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           soundManager.playCriticalAlarm(true);
           soundManager.speakText("Warning! Wake up! Eyes closed detected!", true);
           setActiveEventTrigger('PROLONGED_EYE_CLOSURE');
+          sendBackgroundNotification("🚨 CRITICAL: Eyes Closed / Micro-Sleep Detected!", "Wake up! Eyes closed detected while driving. Pull over immediately.");
 
           if (!driverStateRef.current.eyesClosed && onRecordSafetyEvent) {
             onRecordSafetyEvent({
@@ -680,6 +750,7 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           soundManager.playWarningBeep();
           soundManager.speakText("Warning! Head down detected, eyes on the road!");
           setActiveEventTrigger('HEAD_DOWN');
+          sendBackgroundNotification("⚠️ WARNING: Head Slump / Nodding Off!", `Head down nod detected (+${data.metrics.pitch}°). Keep upright and eyes on road.`);
 
           if (onRecordSafetyEvent) {
             onRecordSafetyEvent({
@@ -737,7 +808,9 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           }));
         } else if (data.metrics.isDistracted && !driverStateRef.current.isDistracted && !isHeadDownNow) {
           soundManager.playWarningBeep();
+          soundManager.speakText("Attention: Please keep eyes focused on the road ahead.");
           setActiveEventTrigger('DISTRACTION');
+          sendBackgroundNotification("⚠️ ATTENTION: Driver Distraction", "Head turned away from road for over 3.5s. Stay focused.");
 
           if (onRecordSafetyEvent) {
             onRecordSafetyEvent({
@@ -757,8 +830,17 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             isDistracted: true,
             alertLevel: prev.alertLevel === 'RED' ? 'RED' : 'YELLOW',
             distractionCount: prev.distractionCount + 1,
-            lastAiMessage: "Warning: Looking away from road. Stay focused.",
+            lastAiMessage: "Warning: Looking away from road (> 3.5s). Stay focused.",
           }));
+        } else if (!data.metrics.isDistracted && driverStateRef.current.isDistracted && !isHeadDownNow) {
+          // Driver returned gaze forward: restore state cleanly
+          setDriverState(prev => ({
+            ...prev,
+            isDistracted: false,
+            alertLevel: prev.eyesClosed ? 'RED' : prev.isYawning || prev.isHeadDown ? 'YELLOW' : 'GREEN',
+            lastAiMessage: "Driver gaze centered on the road.",
+          }));
+          setActiveEventTrigger(null);
         }
 
         // EVENT-DRIVEN ARCHITECTURE:
@@ -963,9 +1045,10 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
           const H = overlay.height;
           frameCounterRef.current += 1;
 
-          // 3A. ISO 12233 Optical Calibration Grid (ONLY when virtual simulator is active without live camera stream)
+          // Clean cabin viewport
           if (isSimulatorMode && !activeStreamRef.current) {
-            renderOpticalTestBench(octx, W, H);
+            octx.fillStyle = '#060a12';
+            octx.fillRect(0, 0, W, H);
           }
 
           // Four Corner Viewport Targeting Fiducials
@@ -1105,14 +1188,65 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
 
     animationFrameId = requestAnimationFrame(processVideoFrame);
 
+    // Background Execution Engine:
+    // When the user switches apps or minimizes the tab, browsers pause requestAnimationFrame.
+    // We register a visibilitychange handler to continuously monitor driver safety via setInterval
+    // so alarms, micro-sleep detection, and speech warnings continue running in the background!
+    const handleVisibilityChange = () => {
+      const isHidden = document.hidden;
+      setIsBackgroundActive(isHidden && isMonitoring);
+
+      if (isHidden && isMonitoring) {
+        if (animationFrameId) cancelAnimationFrame(animationFrameId);
+
+        if (!backgroundTimerRef.current) {
+          backgroundTimerRef.current = setInterval(() => {
+            soundManager.unlockAudioContext();
+            const video = videoRef.current;
+            const now = Date.now();
+            const isVideoReady = video && video.readyState >= 2 && video.videoWidth > 0;
+
+            if (isVideoReady && actx && !isSimulatorMode && workerRef.current && !isWorkerBusyRef.current) {
+              isWorkerBusyRef.current = true;
+              actx.drawImage(video, 0, 0, 160, 120);
+              const imageData = actx.getImageData(0, 0, 160, 120);
+              workerRef.current.postMessage({
+                type: 'PROCESS_FRAME',
+                imageData,
+                width: 160,
+                height: 120,
+                timestamp: now,
+              });
+            }
+          }, 125);
+        }
+      } else {
+        if (backgroundTimerRef.current) {
+          clearInterval(backgroundTimerRef.current);
+          backgroundTimerRef.current = null;
+        }
+        if (isMonitoring) {
+          requestWakeLock();
+          animationFrameId = requestAnimationFrame(processVideoFrame);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (backgroundTimerRef.current) {
+        clearInterval(backgroundTimerRef.current);
+        backgroundTimerRef.current = null;
+      }
       if (animationFrameId) cancelAnimationFrame(animationFrameId);
       if (workerRef.current) {
         workerRef.current.terminate();
         workerRef.current = null;
       }
     };
-  }, [isMonitoring, isSimulatorMode, cameraPermission, isMirrored, earThreshold, marThreshold, setDriverState]);
+  }, [isMonitoring, isSimulatorMode, cameraPermission, isMirrored, earThreshold, marThreshold, setDriverState, requestWakeLock]);
 
   // Test Simulators:
   // Immediately fires the full audio alarm siren, voice synthesis, and event-driven pipeline
@@ -1876,29 +2010,29 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
             <span className="tracking-wide">DMS WORKSTATION TELEMATICS</span>
             <span className="text-[9px] text-slate-400 font-normal">[ISO 26262 / SAE J3016]</span>
           </div>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setShowMesh68(v => !v)}
-              className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-colors ${
-                showMesh68
-                  ? 'bg-sky-500/20 text-sky-300 border-sky-500/50'
-                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
-              }`}
-            >
-              68-PT MESH: {showMesh68 ? 'ENABLED' : 'DISABLED'}
-            </button>
-            <button
-              onClick={() => setShowPoseAxes(v => !v)}
-              className={`px-1.5 py-0.5 rounded text-[9px] font-bold border transition-colors ${
-                showPoseAxes
-                  ? 'bg-sky-500/20 text-sky-300 border-sky-500/50'
-                  : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-slate-200'
-              }`}
-            >
-              PNP AXES: {showPoseAxes ? 'ENABLED' : 'DISABLED'}
-            </button>
+          <div className="flex items-center gap-1 flex-wrap">
+            <div className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-bold border bg-indigo-500/20 text-indigo-300 border-indigo-500/40">
+              <Layers className="w-2.5 h-2.5 text-indigo-400" />
+              <span>BACKGROUND MODE: ACTIVE</span>
+            </div>
+            {!notificationsAllowed && (
+              <button
+                onClick={requestNotificationPermission}
+                className="px-1.5 py-0.5 rounded text-[9px] font-bold border bg-sky-500/20 text-sky-300 border-sky-500/50 hover:bg-sky-500/30 flex items-center gap-1"
+                title="Enable system audio and notifications when minimized"
+              >
+                <Bell className="w-2.5 h-2.5 text-sky-400" />
+                <span>ALLOW ALERTS</span>
+              </button>
+            )}
+            <div className="px-1.5 py-0.5 rounded text-[9px] font-bold border bg-emerald-500/20 text-emerald-300 border-emerald-500/50">
+              LOOK-AWAY DELAY: 3.6S
+            </div>
             <div className="px-1.5 py-0.5 rounded text-[9px] font-bold border bg-rose-500/20 text-rose-300 border-rose-500/50">
               HEAD-DOWN SENSITIVITY: HIGH
+            </div>
+            <div className="px-1.5 py-0.5 rounded text-[9px] font-bold border bg-slate-800 text-slate-300 border-slate-700">
+              FACE POINTS: OFF (CLEAN FEED)
             </div>
           </div>
         </div>
