@@ -4,7 +4,7 @@ import {
   CheckCircle2, UserCheck, UserX, Video, VideoOff, FlipHorizontal,
   AlertTriangle, ShieldCheck, ShieldAlert, Sliders, Activity, Cpu,
   Gauge, Terminal, Layers, Crosshair, ChevronDown, ChevronUp,
-  Play, Square, ExternalLink, Bell
+  Play, Square, ExternalLink, Bell, BellOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DriverState, AlertLevel, GeminiFrameAnalysisResult, DrowsinessEvent } from '../types';
@@ -59,6 +59,29 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
   const [isMirrored, setIsMirrored] = useState<boolean>(true);
   const [isLowLight, setIsLowLight] = useState<boolean>(false);
   const [showSimControls, setShowSimControls] = useState<boolean>(false);
+
+  // Dedicated Buzzer Control State
+  const [isBuzzerOff, setIsBuzzerOff] = useState<boolean>(() => soundManager.isBuzzerMuted());
+
+  useEffect(() => {
+    const handleBuzzerChange = () => {
+      setIsBuzzerOff(soundManager.isBuzzerMuted());
+    };
+    window.addEventListener('dms:buzzer_changed', handleBuzzerChange);
+    return () => window.removeEventListener('dms:buzzer_changed', handleBuzzerChange);
+  }, []);
+
+  const handleToggleBuzzer = useCallback(() => {
+    soundManager.unlockAudioContext();
+    const nextState = soundManager.toggleBuzzer();
+    setIsBuzzerOff(nextState);
+  }, []);
+
+  const handleTurnOffBuzzer = useCallback(() => {
+    soundManager.silenceBuzzer();
+    soundManager.setBuzzerMuted(true);
+    setIsBuzzerOff(true);
+  }, []);
 
   // Gemini Event-Driven Analysis States
   const [isAiAnalyzing, setIsAiAnalyzing] = useState(false);
@@ -1498,6 +1521,19 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                     </button>
                   )}
                   <button
+                    onClick={handleToggleBuzzer}
+                    id="btn-mobile-toggle-buzzer"
+                    className={`text-[10px] font-medium px-2 py-0.5 rounded flex items-center gap-1 border active:scale-95 transition-all ${
+                      isBuzzerOff
+                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                        : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                    }`}
+                    title={isBuzzerOff ? "Buzzer is OFF (Tap to turn ON)" : "Buzzer is ON (Tap to turn OFF)"}
+                  >
+                    {isBuzzerOff ? <BellOff className="w-2.5 h-2.5 text-rose-400" /> : <Bell className="w-2.5 h-2.5 text-emerald-400" />}
+                    <span>{isBuzzerOff ? 'Buzzer OFF' : 'Buzzer ON'}</span>
+                  </button>
+                  <button
                     onClick={triggerEyesClosedSimulation}
                     id="btn-mobile-quick-alarm-test"
                     className="text-red-300 hover:text-white font-medium text-[10px] px-1.5 py-0.5 rounded bg-red-500/20 border border-red-500/40 flex items-center gap-1 active:scale-95 transition-transform"
@@ -1578,6 +1614,15 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                     <p className="text-[11px] text-red-100 font-bold bg-red-950/90 px-3 py-0.5 rounded-full border border-red-400/50 mt-1">
                       PULL OVER TO SAFETY IMMEDIATELY
                     </p>
+                    {/* Instant Buzzer Off Button on Mobile Flasher */}
+                    <button
+                      onClick={handleTurnOffBuzzer}
+                      id="btn-mobile-flasher-off-buzzer"
+                      className="mt-2.5 px-3 py-1 bg-slate-950/95 hover:bg-black text-amber-300 border border-amber-400/70 rounded-xl text-[11px] font-bold flex items-center gap-1.5 shadow-xl active:scale-95 transition-all"
+                    >
+                      <BellOff className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Off Buzzer</span>
+                    </button>
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -1792,6 +1837,29 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                 )}
 
                 <button
+                  onClick={handleToggleBuzzer}
+                  id="btn-desktop-toggle-buzzer"
+                  className={`px-2.5 py-0.5 rounded-md text-[11px] font-medium flex items-center gap-1.5 transition-all active:scale-95 border ${
+                    isBuzzerOff
+                      ? 'bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border-rose-500/40'
+                      : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border-emerald-500/40'
+                  }`}
+                  title={isBuzzerOff ? "Buzzer is currently OFF (Click to turn ON)" : "Buzzer is currently ON (Click to turn OFF)"}
+                >
+                  {isBuzzerOff ? (
+                    <>
+                      <BellOff className="w-3 h-3 text-rose-400" />
+                      <span>Buzzer: OFF</span>
+                    </>
+                  ) : (
+                    <>
+                      <Bell className="w-3 h-3 text-emerald-400" />
+                      <span>Buzzer: ON</span>
+                    </>
+                  )}
+                </button>
+
+                <button
                   onClick={triggerEyesClosedSimulation}
                   id="btn-desktop-quick-alarm-test"
                   className="px-2 py-0.5 rounded-md bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 hover:text-white text-[11px] font-medium flex items-center gap-1 transition-all active:scale-95"
@@ -1915,6 +1983,15 @@ export const CameraHUD: React.FC<CameraHUDProps> = ({
                   <p className="text-xs text-red-100 font-bold mt-1 tracking-wide bg-red-950/80 px-3.5 py-1 rounded-full border border-red-400/50 shadow-md">
                     PULL OVER IMMEDIATELY TO A SAFE SPOT
                   </p>
+                  {/* Instant Buzzer Off Button on Desktop Flasher */}
+                  <button
+                    onClick={handleTurnOffBuzzer}
+                    id="btn-desktop-flasher-off-buzzer"
+                    className="mt-3.5 px-5 py-2 bg-slate-950/95 hover:bg-black text-amber-300 border-2 border-amber-400/80 rounded-xl text-xs font-bold flex items-center gap-2 shadow-2xl active:scale-95 transition-transform"
+                  >
+                    <BellOff className="w-4 h-4 text-amber-400" />
+                    <span>Turn Off Buzzer / Silence</span>
+                  </button>
                 </motion.div>
               )}
             </AnimatePresence>

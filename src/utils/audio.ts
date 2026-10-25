@@ -1,17 +1,25 @@
 // High-Precision Web Audio API Synthesizer for DriveSafe AI Alerts
 // Engineered with smooth envelope shaping, anti-clipping gain staging,
 // and debounced alert scheduling.
+// Supports single-shot 2.0-second buzzer alarms with dedicated buzzer mute control.
 
 class SoundManager {
   private audioCtx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
   private isMuted: boolean = false;
-  private volume: number = 0.8;
+  private buzzerMuted: boolean = false;
+  private volume: number = 0.85;
+
+  private activeAlarmOscillators: OscillatorNode[] = [];
+  private activeAlarmGain: GainNode | null = null;
+  private alarmStopTimeout: any = null;
+  private isAlarmPlaying: boolean = false;
+  private lastAlarmEndTime: number = 0;
+
   private lastWarningBeepTime: number = 0;
-  private lastCriticalAlarmTime: number = 0;
   private lastSpeakTime: number = 0;
   private lastSpokenText: string = '';
-  private isContextUnlocked: boolean = false;
+  public isContextUnlocked: boolean = false;
 
   constructor() {
     // Auto-unlock AudioContext on first user interaction
@@ -68,10 +76,42 @@ class SoundManager {
         window.speechSynthesis.cancel();
       }
     }
+    this.dispatchBuzzerState();
   }
 
   public getMuted(): boolean {
     return this.isMuted;
+  }
+
+  // Dedicated Buzzer Control (Off Buzzer / Mute Buzzer)
+  public setBuzzerMuted(muted: boolean): void {
+    this.buzzerMuted = muted;
+    if (muted) {
+      this.stopAlarm();
+    }
+    this.dispatchBuzzerState();
+  }
+
+  public isBuzzerMuted(): boolean {
+    return this.buzzerMuted || this.isMuted;
+  }
+
+  public toggleBuzzer(): boolean {
+    const nextState = !this.buzzerMuted;
+    this.setBuzzerMuted(nextState);
+    return nextState;
+  }
+
+  public silenceBuzzer(): void {
+    this.stopAlarm();
+  }
+
+  private dispatchBuzzerState(): void {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('dms:buzzer_changed', {
+        detail: { isBuzzerMuted: this.buzzerMuted, isMuted: this.isMuted }
+      }));
+    }
   }
 
   public setVolume(vol: number): void {
@@ -83,7 +123,7 @@ class SoundManager {
 
   // Play high-frequency warning alert chirp with 1.2s debounce to prevent audio stacking
   public playWarningBeep(force: boolean = false): void {
-    if (this.isMuted) return;
+    if (this.isMuted || this.buzzerMuted) return;
     const now = Date.now();
     if (!force && now - this.lastWarningBeepTime < 1200) return;
     this.lastWarningBeepTime = now;
@@ -124,12 +164,19 @@ class SoundManager {
   }
 
   // Play urgent emergency siren alarm on critical status (Red Alert / Severe Fatigue)
-  // Debounced to 1.6s to maintain continuous urgency without oscillator cacophony
+  // EXACT REQUIREMENT: Rings once for exactly 2.0 seconds and then automatically stops!
+  // Does not loop continuously. Debounced and guarded so subsequent frames don't re-trigger.
   public playCriticalAlarm(force: boolean = false): void {
-    if (this.isMuted) return;
+    if (this.isMuted || this.buzzerMuted) return;
+
+    // If alarm is already sounding its 2-second alert, do not restart or stack
+    if (this.isAlarmPlaying) return;
+
     const now = Date.now();
-    if (!force && now - this.lastCriticalAlarmTime < 1600) return;
-    this.lastCriticalAlarmTime = now;
+    // Enforce cooldown so after the 2-second ring stops, it waits at least 3.5 seconds before repeating
+    if (!force && now - this.lastAlarmEndTime < 3500) {
+      return;
+    }
 
     try {
       const ctx = this.getAudioContext();
@@ -137,7 +184,10 @@ class SoundManager {
         ctx.resume();
       }
 
+      this.isAlarmPlaying = true;
       const t = ctx.currentTime;
+      const duration = 2.0; // Strictly 2.0 seconds
+
       const osc1 = ctx.createOscillator();
       const osc2 = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -145,24 +195,52 @@ class SoundManager {
       osc1.type = 'triangle';
       osc2.type = 'sawtooth';
 
-      // 2-Tone Alternating Emergency Siren Pattern
-      // Pulse 1
+      // 4-pulse alternating emergency siren over the exact 2-second window (0.5s per pulse cycle)
+      // Pulse 1 (0.0s - 0.5s)
       osc1.frequency.setValueAtTime(950, t);
       osc1.frequency.setValueAtTime(1400, t + 0.12);
-      osc1.frequency.setValueAtTime(950, t + 0.24);
-      osc1.frequency.setValueAtTime(1400, t + 0.36);
+      osc1.frequency.setValueAtTime(950, t + 0.25);
+      osc1.frequency.setValueAtTime(1400, t + 0.38);
 
-      osc2.frequency.setValueAtTime(475, t);
-      osc2.frequency.setValueAtTime(700, t + 0.12);
-      osc2.frequency.setValueAtTime(475, t + 0.24);
-      osc2.frequency.setValueAtTime(700, t + 0.36);
+      // Pulse 2 (0.5s - 1.0s)
+      osc1.frequency.setValueAtTime(950, t + 0.50);
+      osc1.frequency.setValueAtTime(1400, t + 0.62);
+      osc1.frequency.setValueAtTime(950, t + 0.75);
+      osc1.frequency.setValueAtTime(1400, t + 0.88);
 
-      // Volume envelope with pulsing intensity
+      // Pulse 3 (1.0s - 1.5s)
+      osc1.frequency.setValueAtTime(950, t + 1.00);
+      osc1.frequency.setValueAtTime(1400, t + 1.12);
+      osc1.frequency.setValueAtTime(950, t + 1.25);
+      osc1.frequency.setValueAtTime(1400, t + 1.38);
+
+      // Pulse 4 (1.5s - 2.0s)
+      osc1.frequency.setValueAtTime(950, t + 1.50);
+      osc1.frequency.setValueAtTime(1400, t + 1.62);
+      osc1.frequency.setValueAtTime(950, t + 1.75);
+      osc1.frequency.setValueAtTime(1400, t + 1.88);
+
+      // Lower harmonic sub-oscillator
+      for (let p = 0; p < 4; p++) {
+        const offset = p * 0.5;
+        osc2.frequency.setValueAtTime(475, t + offset);
+        osc2.frequency.setValueAtTime(700, t + offset + 0.12);
+        osc2.frequency.setValueAtTime(475, t + offset + 0.25);
+        osc2.frequency.setValueAtTime(700, t + offset + 0.38);
+      }
+
+      // Smooth pulsing volume envelope across the 2 seconds
       gain.gain.setValueAtTime(0.0001, t);
       gain.gain.linearRampToValueAtTime(0.55, t + 0.03);
-      gain.gain.setValueAtTime(0.4, t + 0.12);
-      gain.gain.linearRampToValueAtTime(0.6, t + 0.24);
-      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
+      for (let p = 0; p < 4; p++) {
+        const offset = p * 0.5;
+        gain.gain.setValueAtTime(0.55, t + offset + 0.03);
+        gain.gain.setValueAtTime(0.20, t + offset + 0.24);
+        gain.gain.linearRampToValueAtTime(0.60, t + offset + 0.27);
+        gain.gain.setValueAtTime(0.20, t + offset + 0.48);
+      }
+      // Precise taper to zero right at 2.0 seconds
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
 
       osc1.connect(gain);
       osc2.connect(gain);
@@ -173,18 +251,30 @@ class SoundManager {
         gain.connect(ctx.destination);
       }
 
+      this.activeAlarmOscillators = [osc1, osc2];
+      this.activeAlarmGain = gain;
+
       osc1.start(t);
       osc2.start(t);
-      osc1.stop(t + 0.58);
-      osc2.stop(t + 0.58);
+      osc1.stop(t + duration);
+      osc2.stop(t + duration);
+
+      // Safety timer to clear references and reset flag precisely after 2.0 seconds
+      if (this.alarmStopTimeout) {
+        clearTimeout(this.alarmStopTimeout);
+      }
+      this.alarmStopTimeout = setTimeout(() => {
+        this.stopAlarm();
+      }, duration * 1000);
     } catch (e) {
       console.warn("Critical alarm audio error:", e);
+      this.isAlarmPlaying = false;
     }
   }
 
   // System activation / status chime
   public playSystemChime(): void {
-    if (this.isMuted) return;
+    if (this.isMuted || this.buzzerMuted) return;
     try {
       const ctx = this.getAudioContext();
       const t = ctx.currentTime;
@@ -216,8 +306,8 @@ class SoundManager {
 
   // Text-to-speech alert message with debouncing
   public speakText(text: string, force: boolean = false): void {
-    if (this.isMuted || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
-    
+    if (this.isMuted || this.buzzerMuted || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+
     const now = Date.now();
     if (!force && this.lastSpokenText === text && now - this.lastSpeakTime < 4000) {
       return;
@@ -237,13 +327,40 @@ class SoundManager {
     }
   }
 
-  // Stop any active sounds and speech
+  // Stop any active buzzer alarm sounds immediately
   public stopAlarm(): void {
+    if (this.alarmStopTimeout) {
+      clearTimeout(this.alarmStopTimeout);
+      this.alarmStopTimeout = null;
+    }
+
+    this.isAlarmPlaying = false;
+    this.lastAlarmEndTime = Date.now();
+
+    for (const osc of this.activeAlarmOscillators) {
+      try {
+        osc.stop();
+        osc.disconnect();
+      } catch (e) {}
+    }
+    this.activeAlarmOscillators = [];
+
+    if (this.activeAlarmGain) {
+      try {
+        this.activeAlarmGain.disconnect();
+      } catch (e) {}
+      this.activeAlarmGain = null;
+    }
+
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();
       } catch (e) {}
     }
+  }
+
+  public isAlarmActive(): boolean {
+    return this.isAlarmPlaying;
   }
 }
 

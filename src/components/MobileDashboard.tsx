@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   ShieldAlert, PhoneCall, Volume2, VolumeX, AlertTriangle,
-  RotateCcw, Sparkles, Navigation, CheckCircle2, ChevronRight, X, ExternalLink, Play
+  RotateCcw, Sparkles, Navigation, CheckCircle2, ChevronRight, X, ExternalLink, Play, BellOff
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DriverState, SpeedData, CabinLightConfig, EmergencyContact, DrowsinessEvent } from '../types';
@@ -452,6 +452,19 @@ export const MobileDashboard: React.FC<MobileDashboardProps> = ({
                 </div>
               </div>
             )}
+
+            {/* Quick Off Buzzer button */}
+            <button
+              onClick={() => {
+                soundManager.silenceBuzzer();
+                soundManager.setBuzzerMuted(true);
+              }}
+              id="btn-mobile-high-fatigue-off-buzzer"
+              className="mt-2.5 px-3 py-1 bg-black/70 hover:bg-black text-amber-300 border border-amber-400/50 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 shadow-md"
+            >
+              <BellOff className="w-3.5 h-3.5 text-amber-400" />
+              <span>Off Buzzer / Silence Alert</span>
+            </button>
           </motion.div>
         )}
       </AnimatePresence>

@@ -1,5 +1,5 @@
-import React from 'react';
-import { Shield, Volume2, VolumeX, AlertTriangle, Play, Square, Award, Smartphone, Monitor, Clock } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Shield, Volume2, VolumeX, AlertTriangle, Play, Square, Award, Smartphone, Monitor, Clock, Bell, BellOff } from 'lucide-react';
 import { soundManager } from '../utils/audio';
 
 interface HeaderProps {
@@ -28,6 +28,22 @@ export const Header: React.FC<HeaderProps> = ({
   viewMode,
   onToggleViewMode,
 }) => {
+  const [isBuzzerMuted, setIsBuzzerMuted] = useState<boolean>(() => soundManager.isBuzzerMuted());
+
+  useEffect(() => {
+    const handleBuzzerChange = () => {
+      setIsBuzzerMuted(soundManager.isBuzzerMuted());
+    };
+    window.addEventListener('dms:buzzer_changed', handleBuzzerChange);
+    return () => window.removeEventListener('dms:buzzer_changed', handleBuzzerChange);
+  }, []);
+
+  const handleToggleBuzzer = () => {
+    soundManager.unlockAudioContext();
+    const next = soundManager.toggleBuzzer();
+    setIsBuzzerMuted(next);
+  };
+
   return (
     <header className="backdrop-blur-xl bg-[#020617]/70 border-b border-white/10 sticky top-0 z-40 px-4 py-3 shadow-2xl">
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-2">
@@ -138,11 +154,25 @@ export const Header: React.FC<HeaderProps> = ({
             )}
           </button>
 
-          {/* Sound Toggle */}
+          {/* Buzzer Toggle Button */}
+          <button
+            onClick={handleToggleBuzzer}
+            id="btn-header-toggle-buzzer"
+            title={isBuzzerMuted ? "Buzzer is OFF (click to turn ON)" : "Buzzer is ON (click to turn OFF)"}
+            className={`p-2 rounded-xl backdrop-blur-md transition-all border ${
+              isBuzzerMuted
+                ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 hover:bg-rose-500/30'
+                : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25'
+            }`}
+          >
+            {isBuzzerMuted ? <BellOff className="w-4 h-4 text-rose-400" /> : <Bell className="w-4 h-4 text-emerald-400" />}
+          </button>
+
+          {/* Master Sound Toggle */}
           <button
             onClick={onToggleMute}
             id="btn-toggle-mute"
-            title={isMuted ? "Unmute Alarm Sounds" : "Mute Alarm Sounds"}
+            title={isMuted ? "Unmute All Sounds" : "Mute All Sounds"}
             className="p-2 rounded-xl backdrop-blur-md bg-white/5 hover:bg-white/10 text-slate-300 transition-all border border-white/10"
           >
             {isMuted ? <VolumeX className="w-4 h-4 text-rose-400" /> : <Volume2 className="w-4 h-4 text-emerald-400" />}
